@@ -1,2 +1,29 @@
+# Operating systems
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Temporary and local files
+*.bak
+*.log
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
+
+# Local development servers
+.http-server/
+
+# Generated output and reports
+dist/
+build/
+coverage/
