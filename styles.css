@@ -1,0 +1,313 @@
+:root {
+  color-scheme: light;
+  --background: #fff;
+  --text: #0d1520;
+  --muted: #202b38;
+  --accent: #0969da;
+  --line: #d8dee6;
+  --blueprint-line: rgba(9, 105, 218, 0.2);
+  --blueprint-strong: rgba(9, 105, 218, 0.72);
+  --page-gutter: clamp(1.5rem, 4.45vw, 4.5rem);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--background); }
+
+body {
+  min-width: 20rem;
+  margin: 0;
+  color: var(--text);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+}
+
+.site-shell {
+  display: grid;
+  min-height: 100svh;
+  grid-template-rows: auto 1fr auto;
+}
+
+.site-header,
+.site-footer { padding-inline: var(--page-gutter); }
+
+.site-header {
+  display: flex;
+  min-height: clamp(5.5rem, 9.8vh, 6.5rem);
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.site-name,
+.site-footer p { margin: 0; }
+
+.site-name {
+  font-size: clamp(1.35rem, 2.1vw, 2rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.hero {
+  display: grid;
+  width: 100%;
+  max-width: 96rem;
+  margin-inline: auto;
+  padding: clamp(4rem, 9vh, 7.5rem) var(--page-gutter);
+  grid-template-columns: minmax(0, 1.15fr) minmax(24rem, 0.85fr);
+  align-items: center;
+  gap: clamp(3rem, 7vw, 7rem);
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+  max-width: 49rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(3.5rem, 5.9vw, 6rem);
+  font-weight: 750;
+  letter-spacing: -0.055em;
+  line-height: 1.02;
+}
+
+.hero-copy {
+  max-width: 38rem;
+  margin: clamp(2rem, 4vh, 3rem) 0 0;
+  color: var(--muted);
+  font-size: clamp(1.2rem, 1.8vw, 1.75rem);
+  line-height: 1.58;
+}
+
+.profile-link {
+  display: inline-flex;
+  min-height: 4.75rem;
+  margin-top: clamp(2rem, 4vh, 2.75rem);
+  padding: 1rem 1.8rem;
+  align-items: center;
+  gap: 1rem;
+  border: 2px solid var(--accent);
+  border-radius: 0.5rem;
+  color: var(--accent);
+  font-size: clamp(1.05rem, 1.6vw, 1.55rem);
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: color 160ms ease, background-color 160ms ease, transform 160ms ease;
+}
+
+.profile-link svg {
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transition: transform 160ms ease;
+}
+
+.profile-link:hover {
+  color: #fff;
+  background: var(--accent);
+  transform: translateY(-2px);
+}
+
+.profile-link:hover svg { transform: translateX(0.2rem); }
+
+.profile-link:focus-visible {
+  outline: 3px solid var(--text);
+  outline-offset: 4px;
+}
+
+.blueprint {
+  position: relative;
+  width: min(100%, 34rem);
+  aspect-ratio: 1;
+  justify-self: end;
+}
+
+.blueprint-grid {
+  position: absolute;
+  inset: 5%;
+  background-image: linear-gradient(var(--blueprint-line) 1px, transparent 1px), linear-gradient(90deg, var(--blueprint-line) 1px, transparent 1px);
+  background-size: 20% 20%;
+  mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+}
+
+.blueprint-guide {
+  position: absolute;
+  border-color: var(--blueprint-strong);
+  opacity: 0.62;
+}
+
+.blueprint-guide-horizontal {
+  top: 18%;
+  right: 8%;
+  left: 8%;
+  border-top: 1px dashed var(--blueprint-strong);
+}
+
+.blueprint-guide-vertical {
+  top: 6%;
+  bottom: 6%;
+  left: 38%;
+  border-left: 1px dashed var(--blueprint-strong);
+}
+
+.blueprint-cube {
+  position: absolute;
+  top: 47%;
+  left: 45%;
+  width: 38%;
+  aspect-ratio: 1.08;
+  transform: translate(-50%, -50%);
+}
+
+.cube-face {
+  position: absolute;
+  border: 1.5px solid var(--blueprint-strong);
+}
+
+.cube-front { inset: 18% 20% 0 0; }
+
+.cube-top {
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 18%;
+  border-bottom: 0;
+  transform: skewX(-47deg);
+  transform-origin: bottom left;
+}
+
+.cube-side {
+  top: 18%;
+  right: 0;
+  bottom: 0;
+  width: 20%;
+  border-left: 0;
+  transform: skewY(-43deg);
+  transform-origin: top left;
+}
+
+.blueprint-slash {
+  position: absolute;
+  height: 1px;
+  background: var(--blueprint-strong);
+  transform-origin: left center;
+}
+
+.blueprint-slash-upper {
+  top: 51%;
+  left: 4%;
+  width: 38%;
+  transform: rotate(-28deg);
+}
+
+.blueprint-slash-lower {
+  right: 0;
+  bottom: 14%;
+  width: 60%;
+  transform: rotate(-28deg);
+}
+
+.blueprint-mark {
+  position: absolute;
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.blueprint-mark::before,
+.blueprint-mark::after {
+  position: absolute;
+  content: "";
+  background: var(--blueprint-strong);
+}
+
+.blueprint-mark::before {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+}
+
+.blueprint-mark::after {
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+}
+
+.mark-top-left { top: 16%; left: 6%; }
+.mark-top-right { top: 16%; right: 6%; }
+.mark-bottom-left { bottom: 4%; left: 6%; }
+.mark-bottom-right { right: 6%; bottom: 4%; }
+
+.site-footer {
+  display: flex;
+  min-height: clamp(5.5rem, 10vh, 6.5rem);
+  align-items: center;
+  border-top: 1px solid var(--line);
+  font-size: 1rem;
+}
+
+@media (max-width: 64rem) {
+  .hero {
+    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+    gap: 2rem;
+  }
+
+  h1 { font-size: clamp(3.25rem, 6.5vw, 4.5rem); }
+}
+
+@media (max-width: 48rem) {
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: 3.75rem;
+    grid-template-columns: 1fr;
+    align-content: center;
+  }
+
+  h1 { font-size: clamp(2.65rem, 12vw, 4rem); }
+
+  .hero-copy {
+    font-size: 1.15rem;
+    line-height: 1.55;
+  }
+
+  .profile-link {
+    min-height: 4rem;
+    font-size: 1.05rem;
+  }
+
+  .blueprint {
+    position: absolute;
+    z-index: 0;
+    right: -7rem;
+    bottom: 6rem;
+    width: 20rem;
+    opacity: 0.2;
+    pointer-events: none;
+  }
+
+  .site-footer { font-size: 0.95rem; }
+}
+
+@media (max-width: 30rem) {
+  h1 br { display: none; }
+
+  .profile-link {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .blueprint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-link,
+  .profile-link svg { transition: none; }
+}
