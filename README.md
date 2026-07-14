@@ -1,47 +1,46 @@
 # mahmadnet.github.io
 
-This is the public GitHub Pages user-site repository for the
-[`mahmadnet`](https://github.com/mahmadnet) GitHub account. Its primary purpose is
-to reserve and serve the standard user-site namespace so approved project sites
-can be published at `https://mahmadnet.github.io/<repository>/`.
+This repository publishes Muhammad Ahmad's lightweight public profile home at
+`https://mahmadnet.github.io/`. It also reserves the standard GitHub Pages user
+namespace for approved project sites.
 
-## Portfolio relationship
+## Page implementation
 
-The full portfolio is maintained separately in the private
-`mahmadnet/mahmadnet-website` repository and is published at its canonical URL,
-`https://www.mahmad.net`.
+The root page uses semantic HTML and responsive CSS with no client-side
+JavaScript, package manager, framework, bundler, analytics, tracking, cookies,
+external fonts, or third-party page assets. The approved portrait is stored
+locally at `assets/avatar.jpg`. Visual conventions are documented in
+[`DESIGN.md`](DESIGN.md).
 
-This repository does not contain a copy of the portfolio and must not claim,
-redirect to, or configure the `www.mahmad.net` custom domain. In particular, it
-must not contain a `CNAME` file.
+## Public activity snapshot
 
-## Repository and deployment
+A scheduled maintenance workflow reads only official public GitHub endpoints
+and updates marked regions of `index.html` with rolling-year contribution data
+and aggregate recent public activity. Repository names, commit messages, project
+links, and source responses are not written to the page or retained. The public
+Events API is recent and bounded, so the timeline is a summary rather than a
+complete history.
 
-- Local path: `D:\Workspace\Development\GitHub\mahmadnet.github.io`
-- GitHub repository: `https://github.com/mahmadnet/mahmadnet.github.io`
-- Production URL: `https://mahmadnet.github.io/`
+Validate live data without writing the page with:
+
+```powershell
+python scripts/update_profile.py --dry-run
+```
+
+## Publishing
+
+- Repository: `https://github.com/mahmadnet/mahmadnet.github.io`
+- Production: `https://mahmadnet.github.io/`
 - Default branch: `main`
-- GitHub Pages source: the repository root (`/`) on `main`
-- Build process: none; GitHub Pages publishes the static files directly
+- GitHub Pages source: repository root (`/`) on `main`
 
-No deployment workflow is required while direct branch publishing remains
-available and correctly configured.
-
-## Current status
-
-The landing page is intentionally deferred pending a separate design and
-implementation approval. `index.html` and `styles.css` are deliberately empty,
-so the root website is expected to remain blank and non-functional for now.
+Pages publishes the static root files directly. The activity workflow maintains
+page data only; it does not deploy the site or change Pages settings.
 
 ## Development policy
 
-Future work should remain a lightweight, semantic, accessible static page. Do
-not introduce a package manager, framework, bundler, build step, JavaScript,
-analytics, tracking, cookies, external fonts, third-party assets, duplicated
-portfolio content, automatic redirects, or unapproved project links without
+Keep the repository focused on this user-site page and its documentation. Do
+not add a custom domain, redirects, copied portfolio content, unapproved project
+links, client-side JavaScript, external page assets, or unrelated deployment
+configuration. Staging, committing, pushing, and Pages-setting changes require
 explicit approval.
-
-Before implementation, inspect the repository and live Pages configuration.
-After changes, validate the structure and content, confirm the domain boundary,
-run `git diff --check`, and review the complete diff. Staging, committing,
-pushing, and changes to GitHub Pages settings require explicit approval.
