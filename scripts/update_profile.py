@@ -9,26 +9,22 @@ import datetime as dt
 from dataclasses import dataclass
 import html
 from html.parser import HTMLParser
-import json
-import os
 from pathlib import Path
 import re
 import sys
 import tempfile
 from typing import Any
+from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 USERNAME = "mahmadnet"
-FEATURED_REPOSITORY = "mahmadnet.github.io"
 CONTRIBUTIONS_URL = f"https://github.com/users/{USERNAME}/contributions"
-USER_URL = f"https://api.github.com/users/{USERNAME}"
-REPOSITORIES_URL = f"https://api.github.com/users/{USERNAME}/repos?per_page=100&sort=updated"
-GRAPHQL_URL = "https://api.github.com/graphql"
+ACTIVITY_URL = f"https://github.com/{USERNAME}?action=show&controller=profiles&tab=contributions&user_id={USERNAME}"
+ACTIVITY_MONTHS = 12
 USER_AGENT = "mahmadnet.github.io profile updater"
 
 REGIONS = {
-    "facts": ("<!-- PROFILE_DATA:FACTS:START -->", "<!-- PROFILE_DATA:FACTS:END -->"),
-    "repository": ("<!-- PROFILE_DATA:REPOSITORY:START -->", "<!-- PROFILE_DATA:REPOSITORY:END -->"),
+    "about_summary": ("<!-- PROFILE_DATA:ABOUT_SUMMARY:START -->", "<!-- PROFILE_DATA:ABOUT_SUMMARY:END -->"),
     "contributions": ("<!-- PROFILE_DATA:CONTRIBUTIONS:START -->", "<!-- PROFILE_DATA:CONTRIBUTIONS:END -->"),
     "activity": ("<!-- PROFILE_DATA:ACTIVITY:START -->", "<!-- PROFILE_DATA:ACTIVITY:END -->"),
 }
@@ -41,40 +37,21 @@ class ContributionDay:
     count: int
 
 
-@dataclass(frozen=True)
-class ProfileFacts:
-    public_repositories: int
-    member_since: int
-
 
 @dataclass(frozen=True)
-class RepositoryFacts:
-    name: str
-    description: str
-    language: str
-    updated_at: dt.datetime
-    url: str
-
-
-@dataclass(frozen=True)
-class MonthlyActivity:
+class ActivityEvent:
     month: dt.date
-    total: int
-    commits: int
-    pull_requests: int
-    reviews: int
-    issues: int
-    repositories: int
-    private: int
+    kind: str
+    count: int
+    repository_count: int | None = None
+    date_label: str | None = None
 
 
 @dataclass(frozen=True)
 class Snapshot:
     rolling_total: int
     days: tuple[ContributionDay, ...]
-    profile: ProfileFacts
-    repository: RepositoryFacts
-    months: tuple[MonthlyActivity, ...]
+    events: tuple[ActivityEvent, ...]
     updated: dt.date
 
 
@@ -117,19 +94,113 @@ class ContributionParser(HTMLParser):
             self.tooltip_parts = []
 
 
-def request_text(url: str, *, token: str | None = None, payload: dict[str, Any] | None = None) -> str:
+class ActivityFragmentParser(HTMLParser):
+    """Extract only month-level contribution summaries from GitHub's public fragment."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.scope_depth = 0
+        self.month_depth = 0
+        self.month_parts: list[str] = []
+        self.item_depth = 0
+        self.summary_depth = 0
+        self.summary_parts: list[str] = []
+        self.aggregate_depth = 0
+        self.aggregate_parts: list[str] = []
+        self.date_depth = 0
+        self.date_parts: list[str] = []
+        self.raw_items: list[tuple[str, str, str]] = []
+        self.pagination_actions: list[str] = []
+
+    @staticmethod
+    def classes(attrs: dict[str, str | None]) -> set[str]:
+        return set((attrs.get("class") or "").split())
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        classes = self.classes(values)
+        if tag == "form" and "js-show-more-timeline-form" in classes:
+            action = values.get("action")
+            if action:
+                self.pagination_actions.append(action)
+        if self.scope_depth:
+            self.scope_depth += 1
+        elif tag == "div" and "contribution-activity-listing" in classes:
+            self.scope_depth = 1
+        else:
+            return
+        if self.item_depth:
+            self.item_depth += 1
+            if self.summary_depth:
+                self.summary_depth += 1
+            elif tag == "summary":
+                self.summary_depth = 1
+            if self.aggregate_depth:
+                self.aggregate_depth += 1
+            elif tag == "span" and {"f4", "lh-condensed"}.issubset(classes):
+                self.aggregate_depth = 1
+            if self.date_depth:
+                self.date_depth += 1
+            elif tag == "span" and {"float-right", "f6", "color-fg-muted"}.issubset(classes):
+                self.date_depth = 1
+        elif tag == "div" and "TimelineItem" in classes:
+            self.item_depth = 1
+            self.summary_parts = []
+            self.aggregate_parts = []
+            self.date_parts = []
+        if self.month_depth:
+            self.month_depth += 1
+        elif tag == "h3":
+            self.month_depth = 1
+            self.month_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if not self.scope_depth:
+            return
+        if self.month_depth:
+            self.month_parts.append(data)
+        if self.summary_depth:
+            self.summary_parts.append(data)
+        if self.aggregate_depth:
+            self.aggregate_parts.append(data)
+        if self.date_depth:
+            self.date_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self.scope_depth:
+            return
+        if self.month_depth:
+            self.month_depth -= 1
+        if self.summary_depth:
+            self.summary_depth -= 1
+        if self.aggregate_depth:
+            self.aggregate_depth -= 1
+        if self.date_depth:
+            self.date_depth -= 1
+        if self.item_depth:
+            self.item_depth -= 1
+            if self.item_depth == 0:
+                self.raw_items.append((
+                    normalize_text(self.summary_parts),
+                    normalize_text(self.aggregate_parts),
+                    normalize_text(self.date_parts),
+                ))
+        self.scope_depth -= 1
+
+
+def normalize_text(parts: list[str] | str) -> str:
+    value = " ".join(parts) if isinstance(parts, list) else parts
+    return " ".join(value.split())
+
+def request_text(url: str, *, fragment: bool = False) -> str:
     headers = {
         "Accept": "application/vnd.github+json, text/html",
         "User-Agent": USER_AGENT,
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    data = None
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    if payload is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(payload).encode("utf-8")
-    request = Request(url, headers=headers, data=data)
+    if fragment:
+        headers["X-Requested-With"] = "XMLHttpRequest"
+    request = Request(url, headers=headers)
     with urlopen(request, timeout=30) as response:
         if response.status != 200:
             raise RuntimeError(f"GitHub returned HTTP {response.status} for {url}")
@@ -171,100 +242,120 @@ def validate_contributions(total: int, days: list[ContributionDay]) -> None:
         raise ValueError("Contribution cell counts do not match the reported total")
 
 
-def parse_profile_facts(user_source: str) -> ProfileFacts:
-    user = json.loads(user_source)
-    if user.get("login") != USERNAME or not isinstance(user.get("public_repos"), int):
-        raise ValueError("GitHub user response did not match the expected profile")
-    created = dt.datetime.fromisoformat(user["created_at"].replace("Z", "+00:00"))
-    return ProfileFacts(user["public_repos"], created.year)
-
-
-def parse_featured_repository(source: str) -> RepositoryFacts:
-    repositories = json.loads(source)
-    if not isinstance(repositories, list):
-        raise ValueError("GitHub repositories response was not a list")
-    matches = [repo for repo in repositories if repo.get("name") == FEATURED_REPOSITORY]
-    if len(matches) != 1:
-        raise ValueError("The approved featured repository was not found exactly once")
-    repo = matches[0]
-    expected_url = f"https://github.com/{USERNAME}/{FEATURED_REPOSITORY}"
-    if repo.get("private") or repo.get("fork") or repo.get("html_url") != expected_url:
-        raise ValueError("Featured repository failed its public-source validation")
-    updated = dt.datetime.fromisoformat(repo["updated_at"].replace("Z", "+00:00"))
-    return RepositoryFacts(
-        FEATURED_REPOSITORY,
-        repo.get("description") or "Public GitHub Pages profile home.",
-        repo.get("language") or "Unspecified",
-        updated,
-        expected_url,
-    )
-
 
 def shift_month(month: dt.date, offset: int) -> dt.date:
     index = month.year * 12 + month.month - 1 + offset
     return dt.date(index // 12, index % 12 + 1, 1)
 
 
-def monthly_query(now: dt.datetime) -> str:
-    fields = """totalCommitContributions totalIssueContributions totalPullRequestContributions totalPullRequestReviewContributions totalRepositoryContributions restrictedContributionsCount contributionCalendar { totalContributions }"""
-    aliases = []
+def activity_months(now: dt.datetime) -> tuple[dt.date, ...]:
     current = now.date().replace(day=1)
-    for index in range(12):
-        start = shift_month(current, -index)
-        if index == 0:
-            end = now
-        else:
-            next_month = shift_month(start, 1)
-            end = dt.datetime.combine(next_month, dt.time.min, tzinfo=dt.timezone.utc) - dt.timedelta(seconds=1)
-        start_iso = dt.datetime.combine(start, dt.time.min, tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z")
-        end_iso = end.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-        aliases.append(f'm{index}: contributionsCollection(from: "{start_iso}", to: "{end_iso}") {{ {fields} }}')
-    return "query { user(login: \"" + USERNAME + "\") { " + " ".join(aliases) + " } }"
+    return tuple(shift_month(current, -index) for index in range(ACTIVITY_MONTHS))
 
 
-def parse_monthly_activity(source: str, now: dt.datetime) -> tuple[MonthlyActivity, ...]:
-    payload = json.loads(source)
-    if payload.get("errors"):
-        raise ValueError(f"GitHub GraphQL returned errors: {payload['errors']}")
-    user = payload.get("data", {}).get("user")
-    if not isinstance(user, dict):
-        raise ValueError("GitHub GraphQL response did not contain the profile")
-
-    months: list[MonthlyActivity] = []
-    current = now.date().replace(day=1)
-    for index in range(12):
-        data = user.get(f"m{index}")
-        if not isinstance(data, dict):
-            raise ValueError(f"Monthly activity m{index} was missing")
-        values = {
-            "commits": data.get("totalCommitContributions"),
-            "issues": data.get("totalIssueContributions"),
-            "pull_requests": data.get("totalPullRequestContributions"),
-            "reviews": data.get("totalPullRequestReviewContributions"),
-            "repositories": data.get("totalRepositoryContributions"),
-            "private": data.get("restrictedContributionsCount"),
-            "total": data.get("contributionCalendar", {}).get("totalContributions"),
-        }
-        if any(not isinstance(value, int) or value < 0 for value in values.values()):
-            raise ValueError(f"Monthly activity m{index} contained invalid counts")
-        typed_total = sum(values[key] for key in ("commits", "issues", "pull_requests", "reviews", "repositories", "private"))
-        if typed_total != values["total"]:
-            raise ValueError(f"Monthly activity m{index} did not reconcile: {typed_total} != {values['total']}")
-        months.append(MonthlyActivity(shift_month(current, -index), **values))
-    return tuple(months)
+def parse_month_label(parts: list[str]) -> dt.date:
+    label = normalize_text(parts)
+    try:
+        return dt.datetime.strptime(label, "%B %Y").date().replace(day=1)
+    except ValueError as error:
+        raise ValueError(f"Invalid activity month label: {label!r}") from error
 
 
-def fetch_snapshot(token: str, now: dt.datetime) -> Snapshot:
+def parse_activity_item(month: dt.date, summary: str, aggregate: str, date_label: str) -> ActivityEvent:
+    patterns = (
+        (r"Created ([\d,]+) commits? in ([\d,]+) repositor(?:y|ies)", "commits", True),
+        (r"Created ([\d,]+) repositor(?:y|ies)", "repositories", False),
+        (r"Opened ([\d,]+) (?:other )?pull requests?(?: in ([\d,]+) repositor(?:y|ies))?", "pull_requests", True),
+        (r"Reviewed ([\d,]+) (?:other )?pull requests?(?: in ([\d,]+) repositor(?:y|ies))?", "reviews", True),
+        (r"Opened ([\d,]+) (?:other )?issues?(?: in ([\d,]+) repositor(?:y|ies))?", "issues", True),
+    )
+    for pattern, kind, has_repository_count in patterns:
+        match = re.fullmatch(pattern, summary)
+        if match:
+            count = int(match.group(1).replace(",", ""))
+            repository_count = (
+                int(match.group(2).replace(",", ""))
+                if has_repository_count and match.group(2)
+                else None
+            )
+            return ActivityEvent(month, kind, count, repository_count)
+    aggregate_match = re.fullmatch(r"([\d,]+) contributions? in private repositories", aggregate)
+    if aggregate_match and not summary:
+        count = int(aggregate_match.group(1).replace(",", ""))
+        return ActivityEvent(month, "contributions", count, date_label=date_label or None)
+    detail = summary or aggregate or "(empty event)"
+    raise ValueError(f"Unsupported activity event: {detail}")
+
+
+def expected_pagination_url(action: str, expected_month: dt.date) -> str:
+    url = urljoin("https://github.com", action)
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    month_end = dt.date(expected_month.year, expected_month.month, calendar.monthrange(expected_month.year, expected_month.month)[1])
+    expected = {
+        "tab": ["overview"],
+        "from": [expected_month.isoformat()],
+        "to": [month_end.isoformat()],
+        "include_header": ["no"],
+    }
+    if parsed.scheme != "https" or parsed.netloc != "github.com" or parsed.path != f"/{USERNAME}" or query != expected:
+        raise ValueError("Activity pagination URL failed validation")
+    return url
+
+
+def parse_activity_fragment(source: str, expected_month: dt.date, expected_previous: dt.date | None) -> tuple[tuple[ActivityEvent, ...], str | None]:
+    parser = ActivityFragmentParser()
+    parser.feed(source)
+    if parser.scope_depth or parser.item_depth or parser.summary_depth or parser.aggregate_depth:
+        raise ValueError("Activity fragment contains unbalanced HTML")
+    month = parse_month_label(parser.month_parts)
+    if month != expected_month:
+        raise ValueError(f"Expected activity for {expected_month:%B %Y}, received {month:%B %Y}")
+    events = tuple(parse_activity_item(month, *item) for item in parser.raw_items)
+    if expected_previous is None:
+        next_url = None
+    else:
+        if len(parser.pagination_actions) != 1:
+            raise ValueError("Activity fragment did not contain exactly one pagination action")
+        next_url = expected_pagination_url(parser.pagination_actions[0], expected_previous)
+    return events, next_url
+
+
+def reconcile_activity(events: tuple[ActivityEvent, ...], days: tuple[ContributionDay, ...], months: tuple[dt.date, ...]) -> None:
+    calendar_totals = {month: 0 for month in months}
+    for day in days:
+        month = day.date.replace(day=1)
+        if month in calendar_totals:
+            calendar_totals[month] += day.count
+    event_totals = {month: 0 for month in months}
+    for event in events:
+        if event.month not in event_totals or event.count <= 0:
+            raise ValueError("Activity event fell outside the requested window or had an invalid count")
+        event_totals[event.month] += event.count
+    for month in months:
+        if event_totals[month] != calendar_totals[month]:
+            raise ValueError(f"Activity for {month:%B %Y} did not reconcile: {event_totals[month]} != {calendar_totals[month]}")
+
+
+def fetch_activity(now: dt.datetime, days: tuple[ContributionDay, ...]) -> tuple[ActivityEvent, ...]:
+    months = activity_months(now)
+    url = ACTIVITY_URL
+    events: list[ActivityEvent] = []
+    for index, month in enumerate(months):
+        source = request_text(url, fragment=True)
+        previous = months[index + 1] if index + 1 < len(months) else None
+        month_events, url = parse_activity_fragment(source, month, previous)
+        events.extend(month_events)
+    result = tuple(events)
+    reconcile_activity(result, days, months)
+    return result
+
+
+def fetch_snapshot(now: dt.datetime) -> Snapshot:
     contribution_source = request_text(CONTRIBUTIONS_URL)
-    user_source = request_text(USER_URL)
-    repositories_source = request_text(REPOSITORIES_URL)
-    graphql_source = request_text(GRAPHQL_URL, token=token, payload={"query": monthly_query(now)})
-
     rolling_total, days = parse_contributions(contribution_source)
-    profile = parse_profile_facts(user_source)
-    repository = parse_featured_repository(repositories_source)
-    months = parse_monthly_activity(graphql_source, now)
-    return Snapshot(rolling_total, days, profile, repository, months, now.date())
+    events = fetch_activity(now, days)
+    return Snapshot(rolling_total, days, events, now.date())
 
 
 def plural(count: int, singular: str, plural_form: str | None = None) -> str:
@@ -300,30 +391,17 @@ def contribution_metrics(days: tuple[ContributionDay, ...]) -> dict[str, Any]:
     }
 
 
-def render_facts(profile: ProfileFacts) -> str:
-    return "\n".join([
-        '          <ul class="profile-facts" aria-label="GitHub profile facts">',
-        f'            <li><strong>{profile.public_repositories}</strong><span>public repositories</span></li>',
-        f'            <li><strong>{profile.member_since}</strong><span>GitHub member since</span></li>',
-        "          </ul>",
-    ])
 
-
-def render_repository(repository: RepositoryFacts, public_count: int) -> str:
-    return "\n".join([
-        '          <article class="repository-card">',
-        '            <header class="repository-header">',
-        f'              <h3><a href="{html.escape(repository.url, quote=True)}">{html.escape(repository.name)}</a></h3>',
-        f'              <span class="repository-count">1 of {public_count} public</span>',
-        "            </header>",
-        f'            <p>{html.escape(repository.description)}</p>',
-        '            <footer class="repository-meta">',
-        f'              <span><i aria-hidden="true"></i>{html.escape(repository.language)}</span>',
-        f'              <span>Updated <time datetime="{repository.updated_at.date().isoformat()}">{format_date(repository.updated_at)}</time></span>',
-        "            </footer>",
-        "          </article>",
-    ])
-
+def render_about_summary(snapshot: Snapshot) -> str:
+    metrics = contribution_metrics(snapshot.days)
+    active_days = metrics["active_days"]
+    longest_streak = metrics["longest_streak"]
+    return (
+        f'            <p class="about-summary"><strong>{snapshot.rolling_total:,}</strong> '
+        f'{plural(snapshot.rolling_total, "contribution")} in the last year across '
+        f'<strong>{active_days}</strong> active {plural(active_days, "day")}, including '
+        f'a <strong>{longest_streak}-day</strong> longest streak.</p>'
+    )
 
 def calendar_weeks(days: tuple[ContributionDay, ...]) -> tuple[list[dt.date], dict[dt.date, ContributionDay]]:
     by_date = {day.date: day for day in days}
@@ -393,45 +471,62 @@ def render_contributions(snapshot: Snapshot) -> str:
     return "\n".join(lines)
 
 
-def render_activity_item(activity: MonthlyActivity) -> str:
-    metrics = [
-        ("Commits", activity.commits),
-        ("Pull requests", activity.pull_requests),
-        ("Reviews", activity.reviews),
-        ("Issues", activity.issues),
-        ("Repositories created", activity.repositories),
-        ("Private contributions", activity.private),
-    ]
-    lines = [
-        '            <li class="activity-item">',
-        '              <span class="activity-marker" aria-hidden="true"></span>',
-        '              <article>',
-        '                <header class="activity-header">',
-        f'                  <h3>{activity.month.strftime("%B %Y")}</h3>',
-        f'                  <p><strong>{activity.total:,}</strong> {plural(activity.total, "contribution")}</p>',
-        "                </header>",
-        '                <dl class="activity-metrics">',
-    ]
-    for label, value in metrics:
-        zero = " is-zero" if value == 0 else ""
-        lines.append(f'                  <div class="activity-metric{zero}"><dt>{label}</dt><dd>{value:,}</dd></div>')
-    lines.extend(["                </dl>", "              </article>", "            </li>"])
-    return "\n".join(lines)
+def activity_summary(event: ActivityEvent) -> str:
+    if event.kind == "commits":
+        return (
+            f"Created {event.count:,} {plural(event.count, 'commit')} in "
+            f"{event.repository_count:,} "
+            f"{plural(event.repository_count or 0, 'repository', 'repositories')}"
+        )
+    if event.kind == "repositories":
+        return f"Created {event.count:,} {plural(event.count, 'repository', 'repositories')}"
+    if event.kind in {"pull_requests", "reviews", "issues"}:
+        verb = "Reviewed" if event.kind == "reviews" else "Opened"
+        noun = "issue" if event.kind == "issues" else "pull request"
+        summary = f"{verb} {event.count:,} {plural(event.count, noun)}"
+        if event.repository_count:
+            summary += (
+                f" in {event.repository_count:,} "
+                f"{plural(event.repository_count, 'repository', 'repositories')}"
+            )
+        return summary
+    if event.kind == "contributions":
+        return f"{event.count:,} {plural(event.count, 'contribution')}"
+    raise ValueError(f"Unsupported activity kind: {event.kind}")
 
 
-def render_activity(months: tuple[MonthlyActivity, ...]) -> str:
-    visible = months[:3]
-    earlier = months[3:]
-    lines = ['          <ol class="activity-list activity-list-primary">']
-    lines.extend(render_activity_item(month) for month in visible)
-    lines.append("          </ol>")
-    lines.extend([
-        '          <details class="activity-more">',
-        f'            <summary>Show {len(earlier)} earlier months</summary>',
-        '            <ol class="activity-list">',
-    ])
-    lines.extend(render_activity_item(month) for month in earlier)
-    lines.extend(["            </ol>", "          </details>"])
+def render_activity_list(events: tuple[ActivityEvent, ...], indent: str = "          ") -> list[str]:
+    lines = [f'{indent}<ol class="activity-timeline">']
+    current_month: dt.date | None = None
+    for event in events:
+        if event.month != current_month:
+            current_month = event.month
+            lines.extend([f'{indent}  <li class="activity-month">', f'{indent}    <h3>{event.month.strftime("%B %Y")}</h3>', f'{indent}  </li>'])
+        lines.extend([
+            f'{indent}  <li class="activity-event">',
+            f'{indent}    <span class="activity-marker" aria-hidden="true"></span>',
+            f'{indent}    <p>{html.escape(activity_summary(event))}</p>',
+        ])
+        if event.date_label:
+            lines.append(f'{indent}    <span class="activity-date">{html.escape(event.date_label)}</span>')
+        lines.append(f'{indent}  </li>')
+    lines.append(f"{indent}</ol>")
+    return lines
+
+
+def render_activity(events: tuple[ActivityEvent, ...]) -> str:
+    if not events:
+        return '          <p class="data-placeholder">No contribution activity in this period.</p>'
+    visible = events[:6]
+    earlier = events[6:]
+    lines = render_activity_list(visible)
+    if earlier:
+        lines.extend([
+            '          <details class="activity-more">',
+            '            <summary>Show more activity</summary>',
+            *render_activity_list(earlier, "            "),
+            "          </details>",
+        ])
     return "\n".join(lines)
 
 
@@ -445,10 +540,9 @@ def replace_region(source: str, start: str, end: str, replacement: str) -> str:
 
 def render_index(source: str, snapshot: Snapshot) -> str:
     replacements = {
-        "facts": render_facts(snapshot.profile),
-        "repository": render_repository(snapshot.repository, snapshot.profile.public_repositories),
+        "about_summary": render_about_summary(snapshot),
         "contributions": render_contributions(snapshot),
-        "activity": render_activity(snapshot.months),
+        "activity": render_activity(snapshot.events),
     }
     rendered = source
     for name, replacement in replacements.items():
@@ -474,21 +568,18 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="validate live data without writing the page")
     args = parser.parse_args()
 
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise ValueError("GITHUB_TOKEN is required for monthly aggregate data")
     now = dt.datetime.now(dt.timezone.utc)
-    snapshot = fetch_snapshot(token, now)
+    snapshot = fetch_snapshot(now)
     current = args.index.read_text(encoding="utf-8")
     rendered = render_index(current, snapshot)
 
     if args.dry_run:
         state = "current" if rendered == current else "would change"
-        print(f"Validated {len(snapshot.days)} days, {snapshot.rolling_total:,} rolling contributions, 12 monthly summaries, and the approved featured repository; index {state}.")
+        print(f"Validated {len(snapshot.days)} days, {snapshot.rolling_total:,} rolling contributions, 12 months of sanitized timeline activity; index {state}.")
         return 0
     if rendered != current:
         atomic_write(args.index, rendered)
-        print(f"Updated index with {snapshot.rolling_total:,} rolling contributions and 12 reconciled monthly summaries.")
+        print(f"Updated index with {snapshot.rolling_total:,} rolling contributions and reconciled timeline activity.")
     else:
         print("Index is already current.")
     return 0
@@ -497,6 +588,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"Profile update failed: {error}", file=sys.stderr)
         raise SystemExit(1)

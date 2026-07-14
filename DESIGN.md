@@ -1,33 +1,35 @@
 # Profile overview design system
 
-This document defines the visual and information standard for the public
+This document defines the visual and information standard for Ahmad's public
 `mahmadnet.github.io` profile. The page keeps GitHub's useful profile,
-repository, contribution, and activity concepts while using a quieter personal
-presentation.
+contribution, achievement, and activity concepts while using a
+quieter personal presentation.
 
 ## Design principles
 
 - Prefer factual content, direct labels, and clear hierarchy over decorative UI.
 - Keep the light canvas true white; use neutral gray structure and silver-sage
   only for actions, links, focus, achievements, and contribution data.
-- Use open sections and separators before adding panels. Reserve borders for
-  repository, calendar, and activity structures that benefit from containment.
+- Use consistent section headings and flat bordered panels where containment
+  clarifies the content.
 - Avoid gradients, glows, floating cards, oversized radii, pill-heavy metadata,
   decorative eyebrow labels, and hover movement.
 - Use the system font stack and standard 400, 500, and 600 weights.
 
 ## Information hierarchy
 
-The 56px masthead contains a restrained 28px monogram, `@mahmadnet`, and the
-quiet “Public GitHub overview” label. The desktop body uses a 14rem identity
-sidebar and a flexible factual content column within a 72rem container:
+The 56px masthead contains a restrained 28px monogram and `@mahmadnet` identity
+on the left, with real About, Contributions, and Activity anchors on the right.
+The desktop body uses a 14rem identity sidebar and a flexible factual content
+column within a 72rem container:
 
-1. Profile identity, primary GitHub action, and one curated achievement.
-2. About statement and stable public-account facts.
-3. Current public build: the single allowlisted featured repository.
-4. Contribution map: rolling-year cells and derived pace metrics.
-5. Activity overview: twelve comparable months, with three visible and nine in
-   native `details`/`summary` markup.
+1. Ahmad's profile identity, primary GitHub action, and one curated achievement.
+2. About: a standard section with a concise introductory panel.
+3. Contribution map: rolling-year cells and derived pace metrics.
+4. Activity overview: sanitized events across twelve calendar months.
+
+The footer uses the static convention `© 2026 Ahmad`, with the year represented
+by a semantic `time` element.
 
 ## Color system
 
@@ -70,31 +72,49 @@ shadows.
 
 ## Component conventions
 
-- The monogram is an outlined typographic mark, not a logo asset or decorative
-  badge.
-- The About section is open content with a quiet bottom separator.
+- The monogram is an outlined typographic mark, not a logo asset.
+- Masthead navigation uses compact text anchors, sage hover/focus treatment,
+  and no simulated controls or inactive routes.
+- About uses the same section heading and flat panel pattern as adjacent content.
+  Its third element is one generated sentence summarizing rolling contributions,
+  active days, and the longest streak.
 - The primary action is the strongest sage surface; ordinary metadata remains
   neutral.
-- The repository card uses one flat border, a rectangular count label, and a
-  restrained metadata footer.
 - Contribution insights form one compact definition row separated by rules,
   not individual dashboard cards.
-- Activity months retain identical metric rows and subdued zero values for
-  direct comparison.
+- Activity is an open vertical timeline. Month labels are quiet chronological
+  separators, while each event is one comparable factual sentence with an
+  optional date or range.
+- Exactly six activity events are initially visible. Earlier events use one
+  native `details` control labeled “Show more activity”; the control is omitted
+  when unnecessary.
 - The achievement area is singular and static. It displays GitHub's original
-  Arctic Code Vault Contributor PNG at 56×56 with adjacent readable text. The
-  asset is local, unchanged, and never replaced by CSS initials.
+  Arctic Code Vault Contributor PNG at 56×56 with adjacent readable text.
+
+## Data and privacy semantics
+
+The contribution map is a rolling-year analytical view. Activity uses the
+current month plus the previous eleven calendar months and follows GitHub's
+public Overview pagination. Supported summaries are commits across a repository
+count, repositories created, pull requests opened or reviewed, issues opened,
+and aggregate contributions.
+
+Only event type, count, repository count where needed for grammar, month, and an
+optional date label enter the sanitized model. Repository names, URLs, source
+HTML, commit messages, and public/private wording never enter rendered activity.
+Unknown events, invalid pagination, incomplete history, or a mismatch with the
+calendar fail before `index.html` is modified.
 
 ## Responsive behavior
 
 Above 48rem the page uses two columns and a sticky sidebar. At 48rem and below,
-the identity becomes a compact horizontal block followed by the action,
-achievement, and main content. At 36rem and below, contained data panels tighten
-without adding padding to the open About section. The contribution calendar
-keeps its intrinsic width and scrolls within its labeled region; the document
-must not create horizontal overflow.
+the masthead navigation scrolls within its row, and the identity becomes a
+compact horizontal block followed by the action, achievement, and main content.
+At 36rem and below, panels tighten and event dates stack under their summaries.
+The contribution calendar keeps its intrinsic width and scrolls within its
+labeled region; the document must not create horizontal overflow.
 
-## Accessibility and privacy
+## Accessibility
 
 - Use one `h1`, ordered section headings, descriptive image alternatives, and
   native disclosure semantics.
@@ -102,8 +122,3 @@ must not create horizontal overflow.
 - Never rely on color alone for contribution meaning; retain titles, labels,
   totals, and the intensity legend.
 - Respect `prefers-reduced-motion`; motion is limited to color transitions.
-- Generated regions are replaced atomically using official GitHub sources.
-- Stored generated output is limited to approved public facts, the featured
-  repository, calendar cells, dates, and sanitized aggregates. Raw responses,
-  commit messages, social links, unapproved repository names, and private
-  project details must never enter the page or repository.

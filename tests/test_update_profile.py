@@ -1,5 +1,4 @@
 import datetime as dt
-import json
 from pathlib import Path
 import sys
 import unittest
@@ -7,6 +6,31 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import update_profile
+
+
+def activity_fragment(month: str = "July 2026", include_pagination: bool = True) -> str:
+    pagination = (
+        '<form class="js-show-more-timeline-form" '
+        'action="/mahmadnet?tab=overview&amp;from=2026-06-01&amp;to=2026-06-30&amp;include_header=no"></form>'
+        if include_pagination else ""
+    )
+    return f"""
+    <div class="contribution-activity-listing">
+      <h3><span>{month}</span></h3>
+      <div class="TimelineItem">
+        <details><summary>Created 2 commits in 1 repository</summary>
+          <a href="/mahmadnet/secret-repository">secret-repository</a>
+        </details>
+      </div>
+      <div class="TimelineItem">
+        <div class="TimelineItem-body">
+          <span class="f4 lh-condensed">7 contributions in private repositories</span>
+          <span class="float-right f6 color-fg-muted pt-1">Jul 1 – Jul 14</span>
+        </div>
+      </div>
+      {pagination}
+    </div>
+    """
 
 
 class ProfileUpdaterTests(unittest.TestCase):
@@ -25,109 +49,125 @@ class ProfileUpdaterTests(unittest.TestCase):
         self.assertEqual(metrics["busiest_month"], dt.date(2026, 1, 1))
         self.assertEqual(metrics["busiest_month_total"], 14)
         self.assertAlmostEqual(metrics["average"], 3.75)
-
-    def test_monthly_activity_is_uniform_and_reconciled(self):
+        snapshot = update_profile.Snapshot(15, days, (), dt.date(2026, 2, 1))
+        summary = update_profile.render_about_summary(snapshot)
+        self.assertIn("<strong>15</strong> contributions in the last year", summary)
+        self.assertIn("<strong>4</strong> active days", summary)
+        self.assertIn("<strong>2-day</strong> longest streak", summary)
+    def test_activity_month_window_has_current_plus_previous_eleven(self):
         now = dt.datetime(2026, 7, 14, 12, tzinfo=dt.timezone.utc)
-        user = {}
-        for index in range(12):
-            user[f"m{index}"] = {
-                "totalCommitContributions": 2 if index == 0 else 0,
-                "totalIssueContributions": 0,
-                "totalPullRequestContributions": 1 if index == 0 else 0,
-                "totalPullRequestReviewContributions": 0,
-                "totalRepositoryContributions": 1 if index == 0 else 0,
-                "restrictedContributionsCount": 3 if index == 0 else 0,
-                "contributionCalendar": {"totalContributions": 7 if index == 0 else 0},
-            }
-        months = update_profile.parse_monthly_activity(json.dumps({"data": {"user": user}}), now)
+        months = update_profile.activity_months(now)
         self.assertEqual(len(months), 12)
-        self.assertEqual(months[0].month, dt.date(2026, 7, 1))
-        self.assertEqual(months[-1].month, dt.date(2025, 8, 1))
-        self.assertEqual(months[0].private, 3)
-        self.assertEqual(months[1].total, 0)
+        self.assertEqual(months[0], dt.date(2026, 7, 1))
+        self.assertEqual(months[-1], dt.date(2025, 8, 1))
 
-    def test_monthly_activity_rejects_unreconciled_data(self):
-        now = dt.datetime(2026, 7, 14, 12, tzinfo=dt.timezone.utc)
-        user = {f"m{index}": {
-            "totalCommitContributions": 0,
-            "totalIssueContributions": 0,
-            "totalPullRequestContributions": 0,
-            "totalPullRequestReviewContributions": 0,
-            "totalRepositoryContributions": 0,
-            "restrictedContributionsCount": 0,
-            "contributionCalendar": {"totalContributions": 1 if index == 0 else 0},
-        } for index in range(12)}
-        with self.assertRaises(ValueError):
-            update_profile.parse_monthly_activity(json.dumps({"data": {"user": user}}), now)
-
-    def test_query_contains_twelve_non_overlapping_months(self):
-        now = dt.datetime(2026, 7, 14, 12, tzinfo=dt.timezone.utc)
-        query = update_profile.monthly_query(now)
-        self.assertEqual(query.count("contributionsCollection("), 12)
-        self.assertIn('m0: contributionsCollection(from: "2026-07-01T00:00:00Z"', query)
-        self.assertIn('m1: contributionsCollection(from: "2026-06-01T00:00:00Z", to: "2026-06-30T23:59:59Z"', query)
-        self.assertIn('m11: contributionsCollection(from: "2025-08-01T00:00:00Z"', query)
-
-    def test_profile_facts_come_only_from_the_rest_user_response(self):
-        source = json.dumps({
-            "login": "mahmadnet",
-            "public_repos": 2,
-            "created_at": "2018-02-18T12:00:00Z",
-        })
-        profile = update_profile.parse_profile_facts(source)
-        self.assertEqual(profile.public_repositories, 2)
-        self.assertEqual(profile.member_since, 2018)
-        self.assertEqual(
-            set(profile.__dataclass_fields__),
-            {"public_repositories", "member_since"},
+    def test_fragment_parser_sanitizes_events_and_pagination(self):
+        events, next_url = update_profile.parse_activity_fragment(
+            activity_fragment(),
+            dt.date(2026, 7, 1),
+            dt.date(2026, 6, 1),
         )
+        self.assertEqual(
+            events,
+            (
+                update_profile.ActivityEvent(dt.date(2026, 7, 1), "commits", 2, 1),
+                update_profile.ActivityEvent(
+                    dt.date(2026, 7, 1),
+                    "contributions",
+                    7,
+                    date_label="Jul 1 – Jul 14",
+                ),
+            ),
+        )
+        self.assertEqual(
+            next_url,
+            "https://github.com/mahmadnet?tab=overview&from=2026-06-01&to=2026-06-30&include_header=no",
+        )
+        rendered = update_profile.render_activity(events)
+        self.assertNotIn("private", rendered.lower())
+        self.assertNotIn("secret-repository", rendered)
+        self.assertNotIn("href=", rendered)
 
-    def test_only_approved_repository_is_rendered(self):
-        source = json.dumps([
-            {
-                "name": "another-public-repository",
-                "private": False,
-                "fork": False,
-                "html_url": "https://github.com/mahmadnet/another-public-repository",
-                "updated_at": "2026-07-01T00:00:00Z",
-            },
-            {
-                "name": "mahmadnet.github.io",
-                "description": "GitHub Pages user site for mahmadnet",
-                "language": "HTML",
-                "private": False,
-                "fork": False,
-                "html_url": "https://github.com/mahmadnet/mahmadnet.github.io",
-                "updated_at": "2026-07-14T00:00:00Z",
-            },
-        ])
-        repository = update_profile.parse_featured_repository(source)
-        rendered = update_profile.render_repository(repository, 2)
-        self.assertIn("mahmadnet.github.io", rendered)
-        self.assertNotIn("another-public-repository", rendered)
+    def test_all_supported_event_types_and_pluralization(self):
+        month = dt.date(2026, 7, 1)
+        cases = (
+            ("Created 1 commit in 1 repository", "commits", "Created 1 commit in 1 repository"),
+            ("Created 2 repositories", "repositories", "Created 2 repositories"),
+            ("Opened 1 pull request in 1 repository", "pull_requests", "Opened 1 pull request in 1 repository"),
+            ("Reviewed 2 pull requests in 3 repositories", "reviews", "Reviewed 2 pull requests in 3 repositories"),
+            ("Opened 1 issue in 1 repository", "issues", "Opened 1 issue in 1 repository"),
+        )
+        for source, kind, expected in cases:
+            with self.subTest(source=source):
+                event = update_profile.parse_activity_item(month, source, "", "")
+                self.assertEqual(event.kind, kind)
+                self.assertEqual(update_profile.activity_summary(event), expected)
 
-    def test_activity_shows_three_months_then_nine_more(self):
-        months = tuple(update_profile.MonthlyActivity(
-            dt.date(2026, 7, 1) - dt.timedelta(days=28 * index),
-            0, 0, 0, 0, 0, 0, 0,
-        ) for index in range(12))
-        rendered = update_profile.render_activity(months)
+    def test_unknown_event_and_invalid_pagination_fail(self):
+        month = dt.date(2026, 7, 1)
+        with self.assertRaises(ValueError):
+            update_profile.parse_activity_item(month, "Starred a repository", "", "")
+        with self.assertRaises(ValueError):
+            update_profile.expected_pagination_url(
+                "https://example.com/mahmadnet?tab=overview&from=2026-06-01&to=2026-06-30&include_header=no",
+                dt.date(2026, 6, 1),
+            )
+        with self.assertRaises(ValueError):
+            update_profile.parse_activity_fragment(
+                activity_fragment(include_pagination=False),
+                month,
+                dt.date(2026, 6, 1),
+            )
+
+    def test_activity_reconciliation(self):
+        month = dt.date(2026, 7, 1)
+        days = (
+            update_profile.ContributionDay(dt.date(2026, 7, 1), 1, 2),
+            update_profile.ContributionDay(dt.date(2026, 7, 2), 2, 7),
+        )
+        events = (
+            update_profile.ActivityEvent(month, "commits", 2, 1),
+            update_profile.ActivityEvent(month, "contributions", 7),
+        )
+        update_profile.reconcile_activity(events, days, (month,))
+        with self.assertRaises(ValueError):
+            update_profile.reconcile_activity(events[:1], days, (month,))
+
+    def test_activity_shows_six_events_then_one_disclosure(self):
+        month = dt.date(2026, 7, 1)
+        events = tuple(
+            update_profile.ActivityEvent(
+                update_profile.shift_month(month, -(index // 2)),
+                "contributions",
+                index + 1,
+            )
+            for index in range(8)
+        )
+        rendered = update_profile.render_activity(events)
         visible, expandable = rendered.split('<details class="activity-more">', 1)
-        self.assertEqual(visible.count('class="activity-item"'), 3)
-        self.assertEqual(expandable.count('class="activity-item"'), 9)
-        self.assertIn("Show 9 earlier months", expandable)
-        self.assertEqual(rendered.count('class="activity-metric is-zero"'), 72)
+        self.assertEqual(visible.count('class="activity-event"'), 6)
+        self.assertEqual(expandable.count('class="activity-event"'), 2)
+        self.assertEqual(rendered.count("<details"), 1)
+        self.assertIn("<summary>Show more activity</summary>", rendered)
+        self.assertNotIn("activity-metric", rendered)
+        self.assertNotIn("privacy", rendered.lower())
 
-    def test_missing_generated_region_fails_without_output(self):
+    def test_activity_omits_disclosure_when_six_or_fewer(self):
+        events = tuple(
+            update_profile.ActivityEvent(dt.date(2026, 7, 1), "contributions", index + 1)
+            for index in range(6)
+        )
+        self.assertNotIn("<details", update_profile.render_activity(events))
+
+    def test_missing_region_and_invalid_calendar_fail_without_output(self):
         with self.assertRaises(ValueError):
             update_profile.replace_region("unchanged", "START", "END", "replacement")
-
-    def test_invalid_calendar_is_rejected(self):
         with self.assertRaises(ValueError):
             update_profile.validate_contributions(
                 1,
                 [update_profile.ContributionDay(dt.date(2026, 7, 14), 1, 1)],
             )
+
 
 
 if __name__ == "__main__":

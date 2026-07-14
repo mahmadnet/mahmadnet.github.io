@@ -21,8 +21,6 @@ jobs:
       - name: Run updater tests
         run: python3 -m unittest discover -s tests
       - name: Refresh public profile data
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/update_profile.py
       - name: Validate generated changes
         run: git diff --check
