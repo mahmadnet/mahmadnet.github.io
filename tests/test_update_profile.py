@@ -68,21 +68,19 @@ class ProfileUpdaterTests(unittest.TestCase):
         self.assertIn('m1: contributionsCollection(from: "2026-06-01T00:00:00Z", to: "2026-06-30T23:59:59Z"', query)
         self.assertIn('m11: contributionsCollection(from: "2025-08-01T00:00:00Z"', query)
 
-    def test_profile_parser_deduplicates_achievements_and_tier(self):
-        source = """
-        <span title="Label: Pro">Pro</span>
-        <img class="achievement-badge-sidebar" alt="Achievement: Pull Shark">
-        <span class="achievement-tier-label">x2</span>
-        <img class="achievement-badge-sidebar" alt="Achievement: YOLO">
-        <img class="achievement-badge-sidebar" alt="Achievement: Pull Shark">
-        <span class="achievement-tier-label">x2</span>
-        """
-        is_pro, achievements = update_profile.parse_profile(source)
-        self.assertTrue(is_pro)
-        self.assertEqual(achievements, (
-            update_profile.Achievement("Pull Shark", 2),
-            update_profile.Achievement("YOLO", 1),
-        ))
+    def test_profile_facts_come_only_from_the_rest_user_response(self):
+        source = json.dumps({
+            "login": "mahmadnet",
+            "public_repos": 2,
+            "created_at": "2018-02-18T12:00:00Z",
+        })
+        profile = update_profile.parse_profile_facts(source)
+        self.assertEqual(profile.public_repositories, 2)
+        self.assertEqual(profile.member_since, 2018)
+        self.assertEqual(
+            set(profile.__dataclass_fields__),
+            {"public_repositories", "member_since"},
+        )
 
     def test_only_approved_repository_is_rendered(self):
         source = json.dumps([

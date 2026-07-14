@@ -21,7 +21,6 @@ from urllib.request import Request, urlopen
 USERNAME = "mahmadnet"
 FEATURED_REPOSITORY = "mahmadnet.github.io"
 CONTRIBUTIONS_URL = f"https://github.com/users/{USERNAME}/contributions"
-PROFILE_URL = f"https://github.com/{USERNAME}"
 USER_URL = f"https://api.github.com/users/{USERNAME}"
 REPOSITORIES_URL = f"https://api.github.com/users/{USERNAME}/repos?per_page=100&sort=updated"
 GRAPHQL_URL = "https://api.github.com/graphql"
@@ -29,7 +28,6 @@ USER_AGENT = "mahmadnet.github.io profile updater"
 
 REGIONS = {
     "facts": ("<!-- PROFILE_DATA:FACTS:START -->", "<!-- PROFILE_DATA:FACTS:END -->"),
-    "achievements": ("<!-- PROFILE_DATA:ACHIEVEMENTS:START -->", "<!-- PROFILE_DATA:ACHIEVEMENTS:END -->"),
     "repository": ("<!-- PROFILE_DATA:REPOSITORY:START -->", "<!-- PROFILE_DATA:REPOSITORY:END -->"),
     "contributions": ("<!-- PROFILE_DATA:CONTRIBUTIONS:START -->", "<!-- PROFILE_DATA:CONTRIBUTIONS:END -->"),
     "activity": ("<!-- PROFILE_DATA:ACTIVITY:START -->", "<!-- PROFILE_DATA:ACTIVITY:END -->"),
@@ -44,17 +42,9 @@ class ContributionDay:
 
 
 @dataclass(frozen=True)
-class Achievement:
-    name: str
-    multiplier: int = 1
-
-
-@dataclass(frozen=True)
 class ProfileFacts:
     public_repositories: int
     member_since: int
-    is_pro: bool
-    achievements: tuple[Achievement, ...]
 
 
 @dataclass(frozen=True)
@@ -127,40 +117,6 @@ class ContributionParser(HTMLParser):
             self.tooltip_parts = []
 
 
-class ProfileParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.raw_achievements: list[Achievement] = []
-        self.is_pro = False
-        self.capture_multiplier = False
-        self.multiplier_parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        values = dict(attrs)
-        alt = values.get("alt", "") or ""
-        classes = values.get("class", "") or ""
-        if tag == "img" and alt.startswith("Achievement:") and "achievement-badge-sidebar" in classes:
-            self.raw_achievements.append(Achievement(alt.split(":", 1)[1].strip()))
-        elif tag == "span" and "achievement-tier-label" in classes:
-            self.capture_multiplier = True
-            self.multiplier_parts = []
-        if values.get("title") == "Label: Pro":
-            self.is_pro = True
-
-    def handle_data(self, data: str) -> None:
-        if self.capture_multiplier:
-            self.multiplier_parts.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "span" and self.capture_multiplier:
-            match = re.search(r"x(\d+)", " ".join(self.multiplier_parts), re.IGNORECASE)
-            if match and self.raw_achievements:
-                last = self.raw_achievements[-1]
-                self.raw_achievements[-1] = Achievement(last.name, int(match.group(1)))
-            self.capture_multiplier = False
-            self.multiplier_parts = []
-
-
 def request_text(url: str, *, token: str | None = None, payload: dict[str, Any] | None = None) -> str:
     headers = {
         "Accept": "application/vnd.github+json, text/html",
@@ -215,26 +171,12 @@ def validate_contributions(total: int, days: list[ContributionDay]) -> None:
         raise ValueError("Contribution cell counts do not match the reported total")
 
 
-def parse_profile(source: str) -> tuple[bool, tuple[Achievement, ...]]:
-    parser = ProfileParser()
-    parser.feed(source)
-    deduplicated: dict[str, Achievement] = {}
-    for achievement in parser.raw_achievements:
-        previous = deduplicated.get(achievement.name)
-        if previous is None or achievement.multiplier > previous.multiplier:
-            deduplicated[achievement.name] = achievement
-    if not deduplicated:
-        raise ValueError("No public GitHub achievements were found")
-    return parser.is_pro, tuple(deduplicated.values())
-
-
-def parse_profile_facts(user_source: str, profile_source: str) -> ProfileFacts:
+def parse_profile_facts(user_source: str) -> ProfileFacts:
     user = json.loads(user_source)
     if user.get("login") != USERNAME or not isinstance(user.get("public_repos"), int):
         raise ValueError("GitHub user response did not match the expected profile")
     created = dt.datetime.fromisoformat(user["created_at"].replace("Z", "+00:00"))
-    is_pro, achievements = parse_profile(profile_source)
-    return ProfileFacts(user["public_repos"], created.year, is_pro, achievements)
+    return ProfileFacts(user["public_repos"], created.year)
 
 
 def parse_featured_repository(source: str) -> RepositoryFacts:
@@ -316,11 +258,10 @@ def fetch_snapshot(token: str, now: dt.datetime) -> Snapshot:
     contribution_source = request_text(CONTRIBUTIONS_URL)
     user_source = request_text(USER_URL)
     repositories_source = request_text(REPOSITORIES_URL)
-    profile_source = request_text(PROFILE_URL)
     graphql_source = request_text(GRAPHQL_URL, token=token, payload={"query": monthly_query(now)})
 
     rolling_total, days = parse_contributions(contribution_source)
-    profile = parse_profile_facts(user_source, profile_source)
+    profile = parse_profile_facts(user_source)
     repository = parse_featured_repository(repositories_source)
     months = parse_monthly_activity(graphql_source, now)
     return Snapshot(rolling_total, days, profile, repository, months, now.date())
@@ -368,37 +309,11 @@ def render_facts(profile: ProfileFacts) -> str:
     ])
 
 
-def achievement_mark(name: str) -> str:
-    known = {"Pull Shark": "PS", "YOLO": "YOLO", "Arctic Code Vault Contributor": "ACV"}
-    if name in known:
-        return known[name]
-    initials = "".join(word[0] for word in name.split() if word)
-    return (initials[:4] or "GH").upper()
-
-
-def render_achievements(profile: ProfileFacts) -> str:
-    lines = []
-    if profile.is_pro:
-        lines.append('        <p class="pro-status"><span>Pro</span> GitHub account</p>')
-    lines.extend(['        <section class="achievement-section" aria-labelledby="achievement-heading">', '          <h2 id="achievement-heading">Achievements</h2>', '          <div class="achievement-list">'])
-    for achievement in profile.achievements:
-        multiplier = f'<span class="achievement-tier">×{achievement.multiplier}</span>' if achievement.multiplier > 1 else ""
-        lines.extend([
-            '            <article class="achievement-item">',
-            f'              <span class="achievement-medallion" aria-hidden="true">{html.escape(achievement_mark(achievement.name))}</span>',
-            f'              <h3>{html.escape(achievement.name)}{multiplier}</h3>',
-            "            </article>",
-        ])
-    lines.extend(["          </div>", "        </section>"])
-    return "\n".join(lines)
-
-
 def render_repository(repository: RepositoryFacts, public_count: int) -> str:
     return "\n".join([
         '          <article class="repository-card">',
         '            <header class="repository-header">',
-        '              <div><p class="eyebrow">Featured public repository</p>',
-        f'                <h3><a href="{html.escape(repository.url, quote=True)}">{html.escape(repository.name)}</a></h3></div>',
+        f'              <h3><a href="{html.escape(repository.url, quote=True)}">{html.escape(repository.name)}</a></h3>',
         f'              <span class="repository-count">1 of {public_count} public</span>',
         "            </header>",
         f'            <p>{html.escape(repository.description)}</p>',
@@ -531,7 +446,6 @@ def replace_region(source: str, start: str, end: str, replacement: str) -> str:
 def render_index(source: str, snapshot: Snapshot) -> str:
     replacements = {
         "facts": render_facts(snapshot.profile),
-        "achievements": render_achievements(snapshot.profile),
         "repository": render_repository(snapshot.repository, snapshot.profile.public_repositories),
         "contributions": render_contributions(snapshot),
         "activity": render_activity(snapshot.months),
@@ -570,7 +484,7 @@ def main() -> int:
 
     if args.dry_run:
         state = "current" if rendered == current else "would change"
-        print(f"Validated {len(snapshot.days)} days, {snapshot.rolling_total:,} rolling contributions, 12 monthly summaries, {len(snapshot.profile.achievements)} achievements, and the approved featured repository; index {state}.")
+        print(f"Validated {len(snapshot.days)} days, {snapshot.rolling_total:,} rolling contributions, 12 monthly summaries, and the approved featured repository; index {state}.")
         return 0
     if rendered != current:
         atomic_write(args.index, rendered)

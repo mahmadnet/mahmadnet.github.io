@@ -1,131 +1,109 @@
 # Profile overview design system
 
-This document defines the internal visual and information standard for the
-`mahmadnet.github.io` public profile overview. The page borrows GitHub's useful
-information density and contribution concepts without reproducing GitHub's
-application chrome.
+This document defines the visual and information standard for the public
+`mahmadnet.github.io` profile. The page keeps GitHub's useful profile,
+repository, contribution, and activity concepts while using a quieter personal
+presentation.
+
+## Design principles
+
+- Prefer factual content, direct labels, and clear hierarchy over decorative UI.
+- Keep the light canvas true white; use neutral gray structure and silver-sage
+  only for actions, links, focus, achievements, and contribution data.
+- Use open sections and separators before adding panels. Reserve borders for
+  repository, calendar, and activity structures that benefit from containment.
+- Avoid gradients, glows, floating cards, oversized radii, pill-heavy metadata,
+  decorative eyebrow labels, and hover movement.
+- Use the system font stack and standard 400, 500, and 600 weights.
 
 ## Information hierarchy
 
-The masthead identifies the page as Muhammad Ahmad's public GitHub overview.
-The desktop layout uses a compact identity sidebar and a wider factual content
-column:
+The 56px masthead contains a restrained 28px monogram, `@mahmadnet`, and the
+quiet “Public GitHub overview” label. The desktop body uses a 14rem identity
+sidebar and a flexible factual content column within a 72rem container:
 
-1. Profile identity, primary GitHub action, Pro status, and achievements.
-2. About: the approved builder statement and stable public-account facts.
+1. Profile identity, primary GitHub action, and one curated achievement.
+2. About statement and stable public-account facts.
 3. Current public build: the single allowlisted featured repository.
-4. Contribution map: the rolling-year calendar and derived pace metrics.
-5. Activity overview: twelve comparable calendar months, with three visible
-   and nine disclosed through native `details`/`summary` markup.
+4. Contribution map: rolling-year cells and derived pace metrics.
+5. Activity overview: twelve comparable months, with three visible and nine in
+   native `details`/`summary` markup.
 
-Descriptive topics, strengths, and generic capability cards are intentionally
-excluded so that the sidebar and main column do not repeat each other.
+## Color system
 
-## Foundations
+### Light
 
-### Color roles
+| Role | Value |
+| --- | --- |
+| Canvas and primary surface | `#ffffff` |
+| Subtle surface | `#f6f8fa` |
+| Primary text | `#1f2328` |
+| Muted text | `#59636e` |
+| Border / quiet border | `#d0d7de` / `#e6e9ec` |
+| Accent / hover | `#365f53` / `#294a41` |
+| Accent-soft surface | `#edf4f1` |
+| Contribution levels | `#eff2f1`, `#bac9c4`, `#809b92`, `#52796d`, `#2f574b` |
 
-The palette is a personal silver-sage interpretation of a GitHub-like neutral
-interface. Components consume semantic variables rather than literal colors.
+### Dark
 
-| Role | Light | Dark | Use |
-| --- | --- | --- | --- |
-| Canvas | `#f7f9f8` | `#0e1311` | Page background |
-| Surface | `#ffffff` | `#141a17` | Primary panels |
-| Subtle surface | `#eef2f0` | `#1a221e` | Supporting UI |
-| Border | `#cbd4d0` | `#34413b` | Panel and control edges |
-| Text | `#202623` | `#e7ece9` | Primary copy |
-| Muted text | `#66716c` | `#9ba8a2` | Supporting metadata |
-| Accent | `#496b60` | `#91b3a7` | Links, actions, focus, selected data |
-| Accent soft | `#e4ece8` | `#1d2c27` | Notes and highlighted surfaces |
+| Role | Value |
+| --- | --- |
+| Canvas | `#0d1117` |
+| Surface / subtle surface | `#151b23` / `#1f2630` |
+| Primary text | `#f0f3f6` |
+| Muted text | `#9198a1` |
+| Border / quiet border | `#3d444d` / `#2b3139` |
+| Accent / hover | `#9abdad` / `#b0cec2` |
+| Accent-soft surface | `#1d2d28` |
+| Contribution levels | `#1c2421`, `#2e4940`, `#4c6f64`, `#6f9588`, `#9abdad` |
 
-Contribution levels use five ordered values, `--c0` through `--c4`, from an
-inactive silver-gray to the strongest sage. Color is supplemented by accessible
-text, titles, totals, and metric labels; it is never the only carrier of meaning.
+Automatic dark mode follows `prefers-color-scheme`. Semantic variables retain
+the same meaning in both themes.
 
-### Typography
+## Typography, spacing, and shape
 
-The system font stack keeps the page native and asset-free. Type roles are
-12px, 14px, 16px, 20px, 24px, and 32px. Body copy uses 16px/1.5; supporting
-metadata uses 12px or 14px; section headings use 20px or 24px. Weight and size,
-not ornamental styling, establish hierarchy.
+The system font stack is `-apple-system`, BlinkMacSystemFont, Segoe UI,
+Helvetica, Arial, sans-serif. Type roles are 12px, 14px, 16px, 20px, 24px, and
+32px, with restrained tracking and 1.2–1.5 line heights. Spacing follows a 4px
+scale. Controls and panels use 6–8px radii, one-pixel borders, and no panel
+shadows.
 
-### Spacing and shape
+## Component conventions
 
-Spacing follows a 4px scale (`--space-1` through `--space-12`). Panels use
-8–10px radii, one-pixel borders, restrained shadow, and compact padding. The
-content width is 74rem, the sidebar is 15rem, and layout gaps remain large
-enough to separate concepts without reducing information density.
-
-## Components
-
-### Masthead
-
-A CSS monogram, handle, and quiet page label form a slim personal masthead.
-There are no fake menus, search controls, tabs, or GitHub logo assets.
-
-### Profile sidebar
-
-The approved local portrait anchors the identity block. The action is visually
-primary but has one public destination: the GitHub profile. Achievement
-medallions are CSS-only, use short decorative initials with adjacent readable
-names, and safely accommodate future achievement names.
-
-### Repository card
-
-Only `mahmadnet.github.io` may be rendered by name or linked. The card presents
-its public description, primary language, update date, and its place within the
-public-repository total. No general repository feed is created.
-
-### Contribution map
-
-The map reproduces factual daily counts from the official rolling-year
-contribution fragment. It includes month and weekday labels, an intensity
-legend, last-updated metadata, and these derived values:
-
-- active contribution days;
-- longest consecutive-day streak;
-- busiest day;
-- busiest month; and
-- average contributions per active day.
-
-The calendar may scroll horizontally inside its panel; the document itself must
-not create horizontal overflow.
-
-### Activity overview
-
-Each of the current month and previous eleven calendar months uses the same six
-rows: commits, pull requests, reviews, issues, repositories created, and private
-contributions. Zero values remain visible in a subdued state for direct
-comparison. Restricted contributions are an aggregate only and never reveal
-names or details.
+- The monogram is an outlined typographic mark, not a logo asset or decorative
+  badge.
+- The About section is open content with a quiet bottom separator.
+- The primary action is the strongest sage surface; ordinary metadata remains
+  neutral.
+- The repository card uses one flat border, a rectangular count label, and a
+  restrained metadata footer.
+- Contribution insights form one compact definition row separated by rules,
+  not individual dashboard cards.
+- Activity months retain identical metric rows and subdued zero values for
+  direct comparison.
+- The achievement area is singular and static. It displays GitHub's original
+  Arctic Code Vault Contributor PNG at 56×56 with adjacent readable text. The
+  asset is local, unchanged, and never replaced by CSS initials.
 
 ## Responsive behavior
 
-Above 48rem the page uses a two-column profile layout and a sticky sidebar. At
-48rem and below the profile becomes a compact horizontal identity followed by
-the main content. At 36rem and below panels tighten, metrics reduce columns,
-and controls remain full-width where useful. The contribution calendar retains
-its intrinsic width and scrolls within its labeled region.
+Above 48rem the page uses two columns and a sticky sidebar. At 48rem and below,
+the identity becomes a compact horizontal block followed by the action,
+achievement, and main content. At 36rem and below, contained data panels tighten
+without adding padding to the open About section. The contribution calendar
+keeps its intrinsic width and scrolls within its labeled region; the document
+must not create horizontal overflow.
 
-## Accessibility and interaction
+## Accessibility and privacy
 
-- HTML follows one `h1` with ordered section headings.
-- Every interactive element has a visible silver-sage focus ring.
-- Links are distinguishable without relying only on color.
-- The activity expansion uses keyboard-accessible native disclosure markup.
-- The avatar has descriptive alternative text; decorative marks are hidden.
-- Light and dark foreground/background combinations meet WCAG AA for normal
-  text.
-- Motion is minimal and disabled under `prefers-reduced-motion: reduce`.
-- Automatic dark mode follows `prefers-color-scheme` and preserves semantic
-  token roles.
-
-## Data and privacy boundaries
-
-Generated regions are replaced atomically by the standard-library updater.
-Only official GitHub sources are accepted. Stored output is limited to public
-profile facts, the approved featured repository, achievement names, calendar
-cells, dates, and sanitized aggregates. Raw responses, commit messages, social
-links, unapproved repository names, and private project details must never
-enter the page or repository.
+- Use one `h1`, ordered section headings, descriptive image alternatives, and
+  native disclosure semantics.
+- Keep a visible three-pixel focus ring and WCAG AA text contrast in both themes.
+- Never rely on color alone for contribution meaning; retain titles, labels,
+  totals, and the intensity legend.
+- Respect `prefers-reduced-motion`; motion is limited to color transitions.
+- Generated regions are replaced atomically using official GitHub sources.
+- Stored generated output is limited to approved public facts, the featured
+  repository, calendar cells, dates, and sanitized aggregates. Raw responses,
+  commit messages, social links, unapproved repository names, and private
+  project details must never enter the page or repository.
