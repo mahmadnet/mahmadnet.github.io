@@ -1,138 +1,588 @@
 #!/usr/bin/env python3
-"""Refresh sanitized public GitHub activity in index.html without dependencies."""
+"""Generate a sanitized, factual GitHub profile snapshot for the static page."""
+
 from __future__ import annotations
-import argparse, calendar, datetime as dt, html, json, re, sys
+
+import argparse
+import calendar
+import datetime as dt
+from dataclasses import dataclass
+import html
 from html.parser import HTMLParser
+import json
+import os
 from pathlib import Path
+import re
+import sys
+import tempfile
 from typing import Any
 from urllib.request import Request, urlopen
 
-USER="mahmadnet"
-CONTRIB=f"https://github.com/users/{USER}/contributions"
-EVENTS=f"https://api.github.com/users/{USER}/events/public?per_page=100&page={{}}"
-CS="<!-- PROFILE_DATA:CONTRIBUTIONS:START -->"; CE="<!-- PROFILE_DATA:CONTRIBUTIONS:END -->"
-AS="<!-- PROFILE_DATA:ACTIVITY:START -->"; AE="<!-- PROFILE_DATA:ACTIVITY:END -->"
+USERNAME = "mahmadnet"
+FEATURED_REPOSITORY = "mahmadnet.github.io"
+CONTRIBUTIONS_URL = f"https://github.com/users/{USERNAME}/contributions"
+PROFILE_URL = f"https://github.com/{USERNAME}"
+USER_URL = f"https://api.github.com/users/{USERNAME}"
+REPOSITORIES_URL = f"https://api.github.com/users/{USERNAME}/repos?per_page=100&sort=updated"
+GRAPHQL_URL = "https://api.github.com/graphql"
+USER_AGENT = "mahmadnet.github.io profile updater"
 
-class Parser(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True); self.heading=[]; self.in_heading=False
-        self.days=[]; self.tips={}; self.tip=None; self.tip_text=[]
-    def handle_starttag(self,tag,attrs):
-        a=dict(attrs)
-        if tag=="h2" and a.get("id")=="js-contribution-activity-description": self.in_heading=True
-        elif tag=="td" and a.get("data-date"):
-            self.days.append({"date":a["data-date"],"level":int(a.get("data-level","0")),"id":a.get("id","")})
-        elif tag=="tool-tip" and a.get("for"): self.tip=a["for"]; self.tip_text=[]
-    def handle_data(self,data):
-        if self.in_heading:self.heading.append(data)
-        if self.tip:self.tip_text.append(data)
-    def handle_endtag(self,tag):
-        if tag=="h2":self.in_heading=False
-        elif tag=="tool-tip" and self.tip:
-            self.tips[self.tip]=" ".join(self.tip_text).strip(); self.tip=None
+REGIONS = {
+    "facts": ("<!-- PROFILE_DATA:FACTS:START -->", "<!-- PROFILE_DATA:FACTS:END -->"),
+    "achievements": ("<!-- PROFILE_DATA:ACHIEVEMENTS:START -->", "<!-- PROFILE_DATA:ACHIEVEMENTS:END -->"),
+    "repository": ("<!-- PROFILE_DATA:REPOSITORY:START -->", "<!-- PROFILE_DATA:REPOSITORY:END -->"),
+    "contributions": ("<!-- PROFILE_DATA:CONTRIBUTIONS:START -->", "<!-- PROFILE_DATA:CONTRIBUTIONS:END -->"),
+    "activity": ("<!-- PROFILE_DATA:ACTIVITY:START -->", "<!-- PROFILE_DATA:ACTIVITY:END -->"),
+}
 
-def fetch(url):
-    req=Request(url,headers={"Accept":"application/vnd.github+json, text/html","User-Agent":"mahmadnet.github.io profile updater","X-GitHub-Api-Version":"2022-11-28"})
-    with urlopen(req,timeout=30) as response:
-        if response.status!=200: raise RuntimeError(f"GitHub returned HTTP {response.status}")
-        return response.read().decode()
 
-def fetch_events():
-    result=[]
-    for page in range(1,4):
-        data=json.loads(fetch(EVENTS.format(page)))
-        if not isinstance(data,list):raise ValueError("Events response was not a list")
-        result.extend(data)
-        if len(data)<100:break
-    return result
+@dataclass(frozen=True)
+class ContributionDay:
+    date: dt.date
+    level: int
+    count: int
 
-def parse_contributions(source):
-    p=Parser(); p.feed(source); heading=" ".join(" ".join(p.heading).split())
-    match=re.search(r"([\d,]+)\s+contributions?",heading)
-    if not match:raise ValueError("Contribution total was not found")
-    total=int(match.group(1).replace(",","")); days=[]
-    for raw in p.days:
-        count_match=re.match(r"([\d,]+)\s+contributions?",p.tips.get(raw["id"],""))
-        days.append({"date":dt.date.fromisoformat(raw["date"]),"level":raw["level"],"count":int(count_match.group(1).replace(",","")) if count_match else 0})
-    days.sort(key=lambda x:x["date"]); validate(total,days); return total,days
 
-def validate(total,days):
-    dates=[x["date"] for x in days]
-    if not 365<=len(days)<=371:raise ValueError(f"Expected rolling-year calendar; received {len(days)} days")
-    if len(set(dates))!=len(dates) or any((b-a).days!=1 for a,b in zip(dates,dates[1:])):raise ValueError("Calendar dates are not unique and consecutive")
-    if any(x["level"] not in range(5) for x in days):raise ValueError("Invalid contribution level")
-    if sum(x["count"] for x in days)!=total:raise ValueError("Cell counts do not match total")
+@dataclass(frozen=True)
+class Achievement:
+    name: str
+    multiplier: int = 1
 
-def label(day):
-    date=day["date"].strftime("%B %d, %Y").replace(" 0"," "); unit="contribution" if day["count"]==1 else "contributions"
-    return f'{day["count"]} {unit} on {date}'
 
-def render_contributions(total,days,updated):
-    by_date={x["date"]:x for x in days}; start=days[0]["date"]-dt.timedelta(days=(days[0]["date"].weekday()+1)%7); end=days[-1]["date"]+dt.timedelta(days=(5-days[-1]["date"].weekday())%7)
-    weeks=[start+dt.timedelta(weeks=i) for i in range((end-start).days//7+1)]; groups=[]
+@dataclass(frozen=True)
+class ProfileFacts:
+    public_repositories: int
+    member_since: int
+    is_pro: bool
+    achievements: tuple[Achievement, ...]
+
+
+@dataclass(frozen=True)
+class RepositoryFacts:
+    name: str
+    description: str
+    language: str
+    updated_at: dt.datetime
+    url: str
+
+
+@dataclass(frozen=True)
+class MonthlyActivity:
+    month: dt.date
+    total: int
+    commits: int
+    pull_requests: int
+    reviews: int
+    issues: int
+    repositories: int
+    private: int
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    rolling_total: int
+    days: tuple[ContributionDay, ...]
+    profile: ProfileFacts
+    repository: RepositoryFacts
+    months: tuple[MonthlyActivity, ...]
+    updated: dt.date
+
+
+class ContributionParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.heading_parts: list[str] = []
+        self.in_heading = False
+        self.raw_days: list[dict[str, Any]] = []
+        self.tooltips: dict[str, str] = {}
+        self.tooltip_for: str | None = None
+        self.tooltip_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "h2" and values.get("id") == "js-contribution-activity-description":
+            self.in_heading = True
+        elif tag == "td" and values.get("data-date"):
+            self.raw_days.append({
+                "date": values["data-date"],
+                "level": int(values.get("data-level", "0")),
+                "id": values.get("id", ""),
+            })
+        elif tag == "tool-tip" and values.get("for"):
+            self.tooltip_for = values["for"]
+            self.tooltip_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self.in_heading:
+            self.heading_parts.append(data)
+        if self.tooltip_for:
+            self.tooltip_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "h2":
+            self.in_heading = False
+        elif tag == "tool-tip" and self.tooltip_for:
+            self.tooltips[self.tooltip_for] = " ".join(self.tooltip_parts).strip()
+            self.tooltip_for = None
+            self.tooltip_parts = []
+
+
+class ProfileParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.raw_achievements: list[Achievement] = []
+        self.is_pro = False
+        self.capture_multiplier = False
+        self.multiplier_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        alt = values.get("alt", "") or ""
+        classes = values.get("class", "") or ""
+        if tag == "img" and alt.startswith("Achievement:") and "achievement-badge-sidebar" in classes:
+            self.raw_achievements.append(Achievement(alt.split(":", 1)[1].strip()))
+        elif tag == "span" and "achievement-tier-label" in classes:
+            self.capture_multiplier = True
+            self.multiplier_parts = []
+        if values.get("title") == "Label: Pro":
+            self.is_pro = True
+
+    def handle_data(self, data: str) -> None:
+        if self.capture_multiplier:
+            self.multiplier_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "span" and self.capture_multiplier:
+            match = re.search(r"x(\d+)", " ".join(self.multiplier_parts), re.IGNORECASE)
+            if match and self.raw_achievements:
+                last = self.raw_achievements[-1]
+                self.raw_achievements[-1] = Achievement(last.name, int(match.group(1)))
+            self.capture_multiplier = False
+            self.multiplier_parts = []
+
+
+def request_text(url: str, *, token: str | None = None, payload: dict[str, Any] | None = None) -> str:
+    headers = {
+        "Accept": "application/vnd.github+json, text/html",
+        "User-Agent": USER_AGENT,
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    data = None
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
+    request = Request(url, headers=headers, data=data)
+    with urlopen(request, timeout=30) as response:
+        if response.status != 200:
+            raise RuntimeError(f"GitHub returned HTTP {response.status} for {url}")
+        return response.read().decode("utf-8")
+
+
+def parse_contributions(source: str) -> tuple[int, tuple[ContributionDay, ...]]:
+    parser = ContributionParser()
+    parser.feed(source)
+    heading = " ".join(" ".join(parser.heading_parts).split())
+    total_match = re.search(r"([\d,]+)\s+contributions?", heading)
+    if not total_match:
+        raise ValueError("Contribution total was not found")
+
+    days: list[ContributionDay] = []
+    for raw in parser.raw_days:
+        tooltip = parser.tooltips.get(raw["id"], "")
+        count_match = re.match(r"([\d,]+)\s+contributions?", tooltip)
+        count = int(count_match.group(1).replace(",", "")) if count_match else 0
+        days.append(ContributionDay(dt.date.fromisoformat(raw["date"]), raw["level"], count))
+
+    days.sort(key=lambda day: day.date)
+    total = int(total_match.group(1).replace(",", ""))
+    validate_contributions(total, days)
+    return total, tuple(days)
+
+
+def validate_contributions(total: int, days: list[ContributionDay]) -> None:
+    dates = [day.date for day in days]
+    if not 365 <= len(days) <= 371:
+        raise ValueError(f"Expected a rolling-year calendar, received {len(days)} days")
+    if len(set(dates)) != len(dates):
+        raise ValueError("Contribution calendar contains duplicate dates")
+    if any((right - left).days != 1 for left, right in zip(dates, dates[1:])):
+        raise ValueError("Contribution calendar dates are not consecutive")
+    if any(day.level not in range(5) for day in days):
+        raise ValueError("Contribution calendar contains an invalid level")
+    if sum(day.count for day in days) != total:
+        raise ValueError("Contribution cell counts do not match the reported total")
+
+
+def parse_profile(source: str) -> tuple[bool, tuple[Achievement, ...]]:
+    parser = ProfileParser()
+    parser.feed(source)
+    deduplicated: dict[str, Achievement] = {}
+    for achievement in parser.raw_achievements:
+        previous = deduplicated.get(achievement.name)
+        if previous is None or achievement.multiplier > previous.multiplier:
+            deduplicated[achievement.name] = achievement
+    if not deduplicated:
+        raise ValueError("No public GitHub achievements were found")
+    return parser.is_pro, tuple(deduplicated.values())
+
+
+def parse_profile_facts(user_source: str, profile_source: str) -> ProfileFacts:
+    user = json.loads(user_source)
+    if user.get("login") != USERNAME or not isinstance(user.get("public_repos"), int):
+        raise ValueError("GitHub user response did not match the expected profile")
+    created = dt.datetime.fromisoformat(user["created_at"].replace("Z", "+00:00"))
+    is_pro, achievements = parse_profile(profile_source)
+    return ProfileFacts(user["public_repos"], created.year, is_pro, achievements)
+
+
+def parse_featured_repository(source: str) -> RepositoryFacts:
+    repositories = json.loads(source)
+    if not isinstance(repositories, list):
+        raise ValueError("GitHub repositories response was not a list")
+    matches = [repo for repo in repositories if repo.get("name") == FEATURED_REPOSITORY]
+    if len(matches) != 1:
+        raise ValueError("The approved featured repository was not found exactly once")
+    repo = matches[0]
+    expected_url = f"https://github.com/{USERNAME}/{FEATURED_REPOSITORY}"
+    if repo.get("private") or repo.get("fork") or repo.get("html_url") != expected_url:
+        raise ValueError("Featured repository failed its public-source validation")
+    updated = dt.datetime.fromisoformat(repo["updated_at"].replace("Z", "+00:00"))
+    return RepositoryFacts(
+        FEATURED_REPOSITORY,
+        repo.get("description") or "Public GitHub Pages profile home.",
+        repo.get("language") or "Unspecified",
+        updated,
+        expected_url,
+    )
+
+
+def shift_month(month: dt.date, offset: int) -> dt.date:
+    index = month.year * 12 + month.month - 1 + offset
+    return dt.date(index // 12, index % 12 + 1, 1)
+
+
+def monthly_query(now: dt.datetime) -> str:
+    fields = """totalCommitContributions totalIssueContributions totalPullRequestContributions totalPullRequestReviewContributions totalRepositoryContributions restrictedContributionsCount contributionCalendar { totalContributions }"""
+    aliases = []
+    current = now.date().replace(day=1)
+    for index in range(12):
+        start = shift_month(current, -index)
+        if index == 0:
+            end = now
+        else:
+            next_month = shift_month(start, 1)
+            end = dt.datetime.combine(next_month, dt.time.min, tzinfo=dt.timezone.utc) - dt.timedelta(seconds=1)
+        start_iso = dt.datetime.combine(start, dt.time.min, tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        end_iso = end.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        aliases.append(f'm{index}: contributionsCollection(from: "{start_iso}", to: "{end_iso}") {{ {fields} }}')
+    return "query { user(login: \"" + USERNAME + "\") { " + " ".join(aliases) + " } }"
+
+
+def parse_monthly_activity(source: str, now: dt.datetime) -> tuple[MonthlyActivity, ...]:
+    payload = json.loads(source)
+    if payload.get("errors"):
+        raise ValueError(f"GitHub GraphQL returned errors: {payload['errors']}")
+    user = payload.get("data", {}).get("user")
+    if not isinstance(user, dict):
+        raise ValueError("GitHub GraphQL response did not contain the profile")
+
+    months: list[MonthlyActivity] = []
+    current = now.date().replace(day=1)
+    for index in range(12):
+        data = user.get(f"m{index}")
+        if not isinstance(data, dict):
+            raise ValueError(f"Monthly activity m{index} was missing")
+        values = {
+            "commits": data.get("totalCommitContributions"),
+            "issues": data.get("totalIssueContributions"),
+            "pull_requests": data.get("totalPullRequestContributions"),
+            "reviews": data.get("totalPullRequestReviewContributions"),
+            "repositories": data.get("totalRepositoryContributions"),
+            "private": data.get("restrictedContributionsCount"),
+            "total": data.get("contributionCalendar", {}).get("totalContributions"),
+        }
+        if any(not isinstance(value, int) or value < 0 for value in values.values()):
+            raise ValueError(f"Monthly activity m{index} contained invalid counts")
+        typed_total = sum(values[key] for key in ("commits", "issues", "pull_requests", "reviews", "repositories", "private"))
+        if typed_total != values["total"]:
+            raise ValueError(f"Monthly activity m{index} did not reconcile: {typed_total} != {values['total']}")
+        months.append(MonthlyActivity(shift_month(current, -index), **values))
+    return tuple(months)
+
+
+def fetch_snapshot(token: str, now: dt.datetime) -> Snapshot:
+    contribution_source = request_text(CONTRIBUTIONS_URL)
+    user_source = request_text(USER_URL)
+    repositories_source = request_text(REPOSITORIES_URL)
+    profile_source = request_text(PROFILE_URL)
+    graphql_source = request_text(GRAPHQL_URL, token=token, payload={"query": monthly_query(now)})
+
+    rolling_total, days = parse_contributions(contribution_source)
+    profile = parse_profile_facts(user_source, profile_source)
+    repository = parse_featured_repository(repositories_source)
+    months = parse_monthly_activity(graphql_source, now)
+    return Snapshot(rolling_total, days, profile, repository, months, now.date())
+
+
+def plural(count: int, singular: str, plural_form: str | None = None) -> str:
+    return singular if count == 1 else (plural_form or f"{singular}s")
+
+
+def format_date(value: dt.date | dt.datetime, include_year: bool = True) -> str:
+    pattern = "%B %d, %Y" if include_year else "%B %d"
+    return value.strftime(pattern).replace(" 0", " ")
+
+
+def contribution_metrics(days: tuple[ContributionDay, ...]) -> dict[str, Any]:
+    active = [day for day in days if day.count > 0]
+    longest = current = 0
+    previous: dt.date | None = None
+    for day in active:
+        current = current + 1 if previous and (day.date - previous).days == 1 else 1
+        longest = max(longest, current)
+        previous = day.date
+    busiest_day = max(days, key=lambda day: (day.count, day.date))
+    month_totals: dict[dt.date, int] = {}
+    for day in days:
+        month = day.date.replace(day=1)
+        month_totals[month] = month_totals.get(month, 0) + day.count
+    busiest_month, busiest_month_total = max(month_totals.items(), key=lambda item: (item[1], item[0]))
+    return {
+        "active_days": len(active),
+        "longest_streak": longest,
+        "busiest_day": busiest_day,
+        "busiest_month": busiest_month,
+        "busiest_month_total": busiest_month_total,
+        "average": (sum(day.count for day in active) / len(active)) if active else 0,
+    }
+
+
+def render_facts(profile: ProfileFacts) -> str:
+    return "\n".join([
+        '          <ul class="profile-facts" aria-label="GitHub profile facts">',
+        f'            <li><strong>{profile.public_repositories}</strong><span>public repositories</span></li>',
+        f'            <li><strong>{profile.member_since}</strong><span>GitHub member since</span></li>',
+        "          </ul>",
+    ])
+
+
+def achievement_mark(name: str) -> str:
+    known = {"Pull Shark": "PS", "YOLO": "YOLO", "Arctic Code Vault Contributor": "ACV"}
+    if name in known:
+        return known[name]
+    initials = "".join(word[0] for word in name.split() if word)
+    return (initials[:4] or "GH").upper()
+
+
+def render_achievements(profile: ProfileFacts) -> str:
+    lines = []
+    if profile.is_pro:
+        lines.append('        <p class="pro-status"><span>Pro</span> GitHub account</p>')
+    lines.extend(['        <section class="achievement-section" aria-labelledby="achievement-heading">', '          <h2 id="achievement-heading">Achievements</h2>', '          <div class="achievement-list">'])
+    for achievement in profile.achievements:
+        multiplier = f'<span class="achievement-tier">×{achievement.multiplier}</span>' if achievement.multiplier > 1 else ""
+        lines.extend([
+            '            <article class="achievement-item">',
+            f'              <span class="achievement-medallion" aria-hidden="true">{html.escape(achievement_mark(achievement.name))}</span>',
+            f'              <h3>{html.escape(achievement.name)}{multiplier}</h3>',
+            "            </article>",
+        ])
+    lines.extend(["          </div>", "        </section>"])
+    return "\n".join(lines)
+
+
+def render_repository(repository: RepositoryFacts, public_count: int) -> str:
+    return "\n".join([
+        '          <article class="repository-card">',
+        '            <header class="repository-header">',
+        '              <div><p class="eyebrow">Featured public repository</p>',
+        f'                <h3><a href="{html.escape(repository.url, quote=True)}">{html.escape(repository.name)}</a></h3></div>',
+        f'              <span class="repository-count">1 of {public_count} public</span>',
+        "            </header>",
+        f'            <p>{html.escape(repository.description)}</p>',
+        '            <footer class="repository-meta">',
+        f'              <span><i aria-hidden="true"></i>{html.escape(repository.language)}</span>',
+        f'              <span>Updated <time datetime="{repository.updated_at.date().isoformat()}">{format_date(repository.updated_at)}</time></span>',
+        "            </footer>",
+        "          </article>",
+    ])
+
+
+def calendar_weeks(days: tuple[ContributionDay, ...]) -> tuple[list[dt.date], dict[dt.date, ContributionDay]]:
+    by_date = {day.date: day for day in days}
+    start = days[0].date - dt.timedelta(days=(days[0].date.weekday() + 1) % 7)
+    end = days[-1].date + dt.timedelta(days=(5 - days[-1].date.weekday()) % 7)
+    weeks = [start + dt.timedelta(weeks=index) for index in range((end - start).days // 7 + 1)]
+    return weeks, by_date
+
+
+def month_headers(weeks: list[dt.date]) -> list[tuple[str, int]]:
+    groups: list[tuple[str, int]] = []
     for week in weeks:
-        name=calendar.month_abbr[week.month]
-        if groups and groups[-1][0]==name:groups[-1]=(name,groups[-1][1]+1)
-        else:groups.append((name,1))
-    out=['              <div class="contribution-summary">',f'                <p><strong>{total:,}</strong> contributions in the last year</p>',f'                <p class="updated-at">Updated <time datetime="{updated.isoformat()}">{updated.strftime("%B %d, %Y").replace(" 0"," ")}</time></p>','              </div>','              <div class="contribution-scroll" tabindex="0" aria-label="Scrollable contribution calendar">','                <table class="contribution-calendar">','                  <caption class="sr-only">Contribution calendar for the last year</caption>','                  <thead><tr><th class="weekday"><span class="sr-only">Day of week</span></th>']
-    out += [f'                    <th colspan="{span}">{name}</th>' for name,span in groups]; out += ['                  </tr></thead><tbody>']
-    names=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; visible={1:'Mon',3:'Wed',5:'Fri'}
+        label = calendar.month_abbr[week.month]
+        if groups and groups[-1][0] == label:
+            groups[-1] = (label, groups[-1][1] + 1)
+        else:
+            groups.append((label, 1))
+    return groups
+
+
+def render_contributions(snapshot: Snapshot) -> str:
+    metrics = contribution_metrics(snapshot.days)
+    weeks, by_date = calendar_weeks(snapshot.days)
+    busiest_day: ContributionDay = metrics["busiest_day"]
+    lines = [
+        '          <div class="contribution-heading">',
+        f'            <p><strong>{snapshot.rolling_total:,}</strong><span>contributions in the last year</span></p>',
+        f'            <p class="updated-at">Updated <time datetime="{snapshot.updated.isoformat()}">{format_date(snapshot.updated)}</time></p>',
+        "          </div>",
+        '          <dl class="map-insights">',
+        f'            <div><dt>Active days</dt><dd>{metrics["active_days"]}</dd></div>',
+        f'            <div><dt>Longest streak</dt><dd>{metrics["longest_streak"]} {plural(metrics["longest_streak"], "day")}</dd></div>',
+        f'            <div><dt>Busiest day</dt><dd>{busiest_day.count} on {format_date(busiest_day.date, False)}</dd></div>',
+        f'            <div><dt>Busiest month</dt><dd>{metrics["busiest_month_total"]:,} in {metrics["busiest_month"].strftime("%B")}</dd></div>',
+        f'            <div><dt>Per active day</dt><dd>{metrics["average"]:.1f} average</dd></div>',
+        "          </dl>",
+        '          <div class="contribution-scroll" tabindex="0" aria-label="Scrollable contribution calendar">',
+        '            <table class="contribution-calendar">',
+        '              <caption class="sr-only">Rolling-year GitHub contribution calendar</caption>',
+        '              <thead><tr><th class="weekday"><span class="sr-only">Day of week</span></th>',
+    ]
+    lines.extend(f'                <th colspan="{span}">{label}</th>' for label, span in month_headers(weeks))
+    lines.append("              </tr></thead><tbody>")
+    weekday_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    visible = {1: "Mon", 3: "Wed", 5: "Fri"}
     for weekday in range(7):
-        out += ['                  <tr>',f'                    <th class="weekday" scope="row"><span aria-hidden="true">{visible.get(weekday,"")}</span><span class="sr-only">{names[weekday]}</span></th>']
+        lines.extend([
+            "              <tr>",
+            f'                <th class="weekday" scope="row"><span aria-hidden="true">{visible.get(weekday, "")}</span><span class="sr-only">{weekday_names[weekday]}</span></th>',
+        ])
         for week in weeks:
-            day=by_date.get(week+dt.timedelta(days=weekday))
-            if not day:out.append('                    <td aria-hidden="true"></td>');continue
-            text=html.escape(label(day),quote=True); out.append(f'                    <td><span class="contribution-day" data-level="{day["level"]}" title="{text}"><span class="sr-only">{text}</span></span></td>')
-        out.append('                  </tr>')
-    out += ['                  </tbody></table>','              </div>','              <div class="contribution-footer"><div class="contribution-legend" aria-label="Contribution intensity from less to more">','                <span>Less</span><span class="legend-cell" aria-hidden="true"></span><span class="legend-cell level-1" aria-hidden="true"></span><span class="legend-cell level-2" aria-hidden="true"></span><span class="legend-cell level-3" aria-hidden="true"></span><span class="legend-cell level-4" aria-hidden="true"></span><span>More</span>','              </div></div>']
-    return "\n".join(out)
+            day = by_date.get(week + dt.timedelta(days=weekday))
+            if day is None:
+                lines.append('                <td aria-hidden="true"></td>')
+                continue
+            unit = plural(day.count, "contribution")
+            label = html.escape(f"{day.count} {unit} on {format_date(day.date)}", quote=True)
+            lines.append(f'                <td><span class="contribution-day" data-level="{day.level}" title="{label}"><span class="sr-only">{label}</span></span></td>')
+        lines.append("              </tr>")
+    lines.extend([
+        "              </tbody></table>",
+        "          </div>",
+        '          <div class="contribution-legend" aria-label="Contribution intensity from less to more">',
+        '            <span>Less</span><i aria-hidden="true"></i><i class="level-1" aria-hidden="true"></i><i class="level-2" aria-hidden="true"></i><i class="level-3" aria-hidden="true"></i><i class="level-4" aria-hidden="true"></i><span>More</span>',
+        "          </div>",
+    ])
+    return "\n".join(lines)
 
-def shift_month(date,offset):
-    n=date.year*12+date.month-1+offset;return dt.date(n//12,n%12+1,1)
-def plural(n,one,many=None):return one if n==1 else (many or one+'s')
 
-def event_details(events,month):
-    selected=[]
-    for event in events:
-        try:created=dt.datetime.fromisoformat(event["created_at"].replace("Z","+00:00"))
-        except (KeyError,TypeError,ValueError):continue
-        if (created.year,created.month)==(month.year,month.month):selected.append(event)
-    details=[]; pushes=[x for x in selected if x.get("type")=="PushEvent"]
-    if pushes:
-        repos={x.get("repo",{}).get("name") for x in pushes}-{None}; details.append(f"{len(pushes)} {plural(len(pushes),'push','pushes')} across {len(repos)} public {plural(len(repos),'repository','repositories')}")
-    created=[x for x in selected if x.get("type")=="CreateEvent" and x.get("payload",{}).get("ref_type")=="repository"]
-    if created:details.append(f"Created {len(created)} public {plural(len(created),'repository','repositories')}")
-    for ref_type,noun in [('branch','branch'),('tag','tag')]:
-        count=sum(x.get("type")=="CreateEvent" and x.get("payload",{}).get("ref_type")==ref_type for x in selected)
-        if count:details.append(f"Created {count} public {plural(count,noun)}")
-    for kind,text in [('PullRequestEvent','pull request event'),('PullRequestReviewEvent','pull request review'),('IssuesEvent','issue event'),('IssueCommentEvent','discussion comment'),('ForkEvent','repository fork'),('WatchEvent','repository star'),('ReleaseEvent','release')]:
-        count=sum(x.get("type")==kind for x in selected)
-        if count:details.append(f"{count} {plural(count,text)}")
-    return details
+def render_activity_item(activity: MonthlyActivity) -> str:
+    metrics = [
+        ("Commits", activity.commits),
+        ("Pull requests", activity.pull_requests),
+        ("Reviews", activity.reviews),
+        ("Issues", activity.issues),
+        ("Repositories created", activity.repositories),
+        ("Private contributions", activity.private),
+    ]
+    lines = [
+        '            <li class="activity-item">',
+        '              <span class="activity-marker" aria-hidden="true"></span>',
+        '              <article>',
+        '                <header class="activity-header">',
+        f'                  <h3>{activity.month.strftime("%B %Y")}</h3>',
+        f'                  <p><strong>{activity.total:,}</strong> {plural(activity.total, "contribution")}</p>',
+        "                </header>",
+        '                <dl class="activity-metrics">',
+    ]
+    for label, value in metrics:
+        zero = " is-zero" if value == 0 else ""
+        lines.append(f'                  <div class="activity-metric{zero}"><dt>{label}</dt><dd>{value:,}</dd></div>')
+    lines.extend(["                </dl>", "              </article>", "            </li>"])
+    return "\n".join(lines)
 
-def render_activity(days,events,updated):
-    counts={x["date"]:x["count"] for x in days}; current=updated.replace(day=1); out=['          <ol class="panel activity-timeline">']
-    for offset in range(3):
-        month=shift_month(current,-offset); next_month=shift_month(month,1); total=sum(v for d,v in counts.items() if month<=d<next_month); details=event_details(events,month)
-        out += ['            <li class="activity-month">','              <span class="activity-marker" aria-hidden="true"></span>',f'              <h3>{month.strftime("%B %Y")}</h3>',f'              <p class="activity-total">{total:,} {plural(total,"contribution")}</p>']
-        if details:out.append('              <ul class="activity-details">');out += [f'                <li>{html.escape(x)}</li>' for x in details];out.append('              </ul>')
-        out.append('            </li>')
-    out.append('          </ol>');return "\n".join(out)
 
-def replace(source,start,end,replacement):
-    if source.count(start)!=1 or source.count(end)!=1:raise ValueError(f"Expected one region bounded by {start} and {end}")
-    before,rest=source.split(start,1);_,after=rest.split(end,1);return before+start+'\n'+replacement+'\n'+end+after
+def render_activity(months: tuple[MonthlyActivity, ...]) -> str:
+    visible = months[:3]
+    earlier = months[3:]
+    lines = ['          <ol class="activity-list activity-list-primary">']
+    lines.extend(render_activity_item(month) for month in visible)
+    lines.append("          </ol>")
+    lines.extend([
+        '          <details class="activity-more">',
+        f'            <summary>Show {len(earlier)} earlier months</summary>',
+        '            <ol class="activity-list">',
+    ])
+    lines.extend(render_activity_item(month) for month in earlier)
+    lines.extend(["            </ol>", "          </details>"])
+    return "\n".join(lines)
 
-def render_index(source,total,days,events,updated):
-    return replace(replace(source,CS,CE,render_contributions(total,days,updated)),AS,AE,render_activity(days,events,updated))
 
-def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--index',type=Path,default=Path('index.html'));ap.add_argument('--dry-run',action='store_true');args=ap.parse_args()
-    total,days=parse_contributions(fetch(CONTRIB));events=fetch_events();updated=dt.datetime.now(dt.timezone.utc).date();current=args.index.read_text(encoding='utf-8');rendered=render_index(current,total,days,events,updated)
-    if args.dry_run:print(f"Validated {len(days)} days, {total:,} contributions, and {len(events)} public events; index {'current' if rendered==current else 'would change'}.")
-    elif rendered!=current:args.index.write_text(rendered,encoding='utf-8',newline='\n');print(f"Updated index with {len(days)} days, {total:,} contributions, and {len(events)} public events.")
-    else:print('Index is already current.')
+def replace_region(source: str, start: str, end: str, replacement: str) -> str:
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise ValueError(f"Expected one generated region bounded by {start} and {end}")
+    before, remainder = source.split(start, 1)
+    _, after = remainder.split(end, 1)
+    return f"{before}{start}\n{replacement}\n{end}{after}"
 
-if __name__=='__main__':
-    try:main()
-    except (OSError,RuntimeError,ValueError,json.JSONDecodeError) as error:print(f"Profile update failed: {error}",file=sys.stderr);raise SystemExit(1)
+
+def render_index(source: str, snapshot: Snapshot) -> str:
+    replacements = {
+        "facts": render_facts(snapshot.profile),
+        "achievements": render_achievements(snapshot.profile),
+        "repository": render_repository(snapshot.repository, snapshot.profile.public_repositories),
+        "contributions": render_contributions(snapshot),
+        "activity": render_activity(snapshot.months),
+    }
+    rendered = source
+    for name, replacement in replacements.items():
+        rendered = replace_region(rendered, *REGIONS[name], replacement)
+    return rendered
+
+
+def atomic_write(path: Path, content: str) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=path.parent, delete=False) as handle:
+            handle.write(content)
+            temporary = Path(handle.name)
+        temporary.replace(path)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--index", type=Path, default=Path("index.html"))
+    parser.add_argument("--dry-run", action="store_true", help="validate live data without writing the page")
+    args = parser.parse_args()
+
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise ValueError("GITHUB_TOKEN is required for monthly aggregate data")
+    now = dt.datetime.now(dt.timezone.utc)
+    snapshot = fetch_snapshot(token, now)
+    current = args.index.read_text(encoding="utf-8")
+    rendered = render_index(current, snapshot)
+
+    if args.dry_run:
+        state = "current" if rendered == current else "would change"
+        print(f"Validated {len(snapshot.days)} days, {snapshot.rolling_total:,} rolling contributions, 12 monthly summaries, {len(snapshot.profile.achievements)} achievements, and the approved featured repository; index {state}.")
+        return 0
+    if rendered != current:
+        atomic_write(args.index, rendered)
+        print(f"Updated index with {snapshot.rolling_total:,} rolling contributions and 12 reconciled monthly summaries.")
+    else:
+        print("Index is already current.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+        print(f"Profile update failed: {error}", file=sys.stderr)
+        raise SystemExit(1)
