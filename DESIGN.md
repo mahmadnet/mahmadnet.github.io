@@ -18,8 +18,9 @@ quieter personal presentation.
 
 ## Information hierarchy
 
-The 56px masthead contains a restrained 28px monogram and `@mahmadnet` identity
-on the left, with real About, Contributions, and Activity anchors on the right.
+The 56px masthead contains a linked 32px MA logo and `@mahmadnet` identity on
+the left, with a native menu for the real About, Contributions, and Activity
+anchors on the right.
 The desktop body uses a 14rem identity sidebar and a flexible factual content
 column within a 72rem container:
 
@@ -72,9 +73,12 @@ shadows.
 
 ## Component conventions
 
-- The monogram is an outlined typographic mark, not a logo asset.
-- Masthead navigation uses compact text anchors, sage hover/focus treatment,
-  and no simulated controls or inactive routes.
+- The supplied MA logo is a cleaned local SVG derivative. It retains the
+  original 1300×1300 geometry and uses theme-aware neutral fields, borders,
+  and silver-sage symbols.
+- The logo and username form one internal home link with a clear accessible
+  name. Masthead navigation uses a native `details` disclosure, compact text
+  anchors, sage hover/focus treatment, and no simulated routes.
 - About uses the same section heading and flat panel pattern as adjacent content.
   Its third element is one generated sentence summarizing rolling contributions,
   active days, and the longest streak.
@@ -108,8 +112,9 @@ calendar fail before `index.html` is modified.
 ## Responsive behavior
 
 Above 48rem the page uses two columns and a sticky sidebar. At 48rem and below,
-the masthead navigation scrolls within its row, and the identity becomes a
-compact horizontal block followed by the action, achievement, and main content.
+the identity becomes a compact horizontal block followed by the action,
+achievement, and main content. The masthead menu is used at every viewport;
+its right-aligned dropdown is constrained to the available viewport width.
 At 36rem and below, panels tighten and event dates stack under their summaries.
 The contribution calendar keeps its intrinsic width and scrolls within its
 labeled region; the document must not create horizontal overflow.

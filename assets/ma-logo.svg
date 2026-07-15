@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 1300">
+  <style>
+    .field { fill: #f6f8fa; }
+    .outline { fill: none; stroke: #d0d7de; stroke-width: 20; }
+    .mark { fill: #365f53; }
+
+    @media (prefers-color-scheme: dark) {
+      .field { fill: #151b23; }
+      .outline { stroke: #3d444d; }
+      .mark { fill: #9abdad; }
+    }
+  </style>
+  <circle class="field" cx="649.75" cy="649.75" r="649.75"/>
+  <circle class="outline" cx="649.75" cy="649.75" r="639.75"/>
+  <path class="mark" d="M550,350v600h600V350H550z M950,750H750V550h200V750z"/>
+  <rect class="mark" x="-50" y="550" width="600" height="200" transform="matrix(6.123234e-17 -1 1 6.123234e-17 -400 900)"/>
+</svg>

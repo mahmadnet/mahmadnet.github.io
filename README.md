@@ -9,9 +9,16 @@ interface.
 
 The root page uses semantic HTML and responsive CSS with no client-side
 JavaScript, package manager, framework, bundler, analytics, tracking, cookies,
-external fonts, or third-party runtime assets. The approved portrait and the
-original Arctic Code Vault Contributor badge are stored locally in `assets/`.
-The visual system is documented in [`DESIGN.md`](DESIGN.md).
+external fonts, or third-party runtime assets. The approved portrait, original
+Arctic Code Vault Contributor badge, and cleaned theme-aware MA logo derivative
+are stored locally in `assets/`. The visual system is documented in
+[`DESIGN.md`](DESIGN.md).
+
+Local asset inventory:
+
+- `assets/avatar.jpg`: approved profile portrait;
+- `assets/arctic-code-vault-contributor.png`: original achievement badge; and
+- `assets/ma-logo.svg`: cleaned, theme-aware derivative of the supplied MA logo.
 
 The public interface includes:
 

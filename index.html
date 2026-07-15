@@ -12,15 +12,25 @@
   <div class="site-shell">
     <header class="masthead">
       <div class="container masthead-inner">
-        <div class="masthead-brand" aria-label="mahmadnet">
-          <span class="monogram" aria-hidden="true">M</span>
-          <p>@mahmadnet</p>
-        </div>
-        <nav class="masthead-nav" aria-label="Page sections">
-          <a href="#about">About</a>
-          <a href="#contributions">Contributions</a>
-          <a href="#activity">Activity</a>
-        </nav>
+        <a class="masthead-brand" href="/" aria-label="mahmadnet site home">
+          <img src="assets/ma-logo.svg" width="32" height="32" alt="">
+          <span>@mahmadnet</span>
+        </a>
+        <details class="masthead-menu">
+          <summary>
+            <span class="sr-only">Toggle page navigation</span>
+            <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 6h18M3 12h18M3 18h18"></path>
+            </svg>
+          </summary>
+          <nav class="masthead-menu-panel" aria-label="Page sections">
+            <ul>
+              <li><a href="#about">About</a></li>
+              <li><a href="#contributions">Contributions</a></li>
+              <li><a href="#activity">Activity</a></li>
+            </ul>
+          </nav>
+        </details>
       </div>
     </header>
 
