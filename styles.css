@@ -631,7 +631,9 @@ body {
 }
 
 .activity-more {
-  margin-top: var(--space-4);
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-muted);
 }
 
 .activity-more summary {
@@ -648,12 +650,28 @@ body {
   font-weight: 600;
 }
 
+.activity-more[open] {
+  display: flex;
+  flex-direction: column;
+}
+
 .activity-more[open] summary {
-  margin-bottom: var(--space-5);
+  order: 2;
+  margin-top: var(--space-6);
+  align-self: flex-start;
 }
 
 .activity-more .activity-timeline {
   margin: 0;
+}
+
+.activity-less-label,
+.activity-more[open] .activity-more-label {
+  display: none;
+}
+
+.activity-more[open] .activity-less-label {
+  display: inline;
 }
 
 .data-placeholder {

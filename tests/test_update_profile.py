@@ -148,7 +148,8 @@ class ProfileUpdaterTests(unittest.TestCase):
         self.assertEqual(visible.count('class="activity-event"'), 6)
         self.assertEqual(expandable.count('class="activity-event"'), 2)
         self.assertEqual(rendered.count("<details"), 1)
-        self.assertIn("<summary>Show more activity</summary>", rendered)
+        self.assertIn('<span class="activity-more-label">See more activity</span>', rendered)
+        self.assertIn('<span class="activity-less-label">See less activity</span>', rendered)
         self.assertNotIn("activity-metric", rendered)
         self.assertNotIn("privacy", rendered.lower())
 

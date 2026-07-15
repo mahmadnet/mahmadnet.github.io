@@ -90,8 +90,9 @@ shadows.
   separators, while each event is one comparable factual sentence with an
   optional date or range.
 - Exactly six activity events are initially visible. Earlier events use one
-  native `details` control labeled “Show more activity”; the control is omitted
-  when unnecessary.
+  separated native `details` control labeled “See more activity.” When open,
+  the control follows the revealed events and reads “See less activity”; it is
+  omitted when unnecessary.
 - The achievement area is singular and static. It displays GitHub's original
   Arctic Code Vault Contributor PNG at 56×56 with adjacent readable text.
 

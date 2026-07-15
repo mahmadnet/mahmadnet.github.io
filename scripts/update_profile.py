@@ -523,7 +523,10 @@ def render_activity(events: tuple[ActivityEvent, ...]) -> str:
     if earlier:
         lines.extend([
             '          <details class="activity-more">',
-            '            <summary>Show more activity</summary>',
+            '            <summary>',
+            '              <span class="activity-more-label">See more activity</span>',
+            '              <span class="activity-less-label">See less activity</span>',
+            '            </summary>',
             *render_activity_list(earlier, "            "),
             "          </details>",
         ])
